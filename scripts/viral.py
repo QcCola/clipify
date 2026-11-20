@@ -253,8 +253,10 @@ def twitch_clips(vod, notes):
     return out
 
 
-STOP = set("the a an and or of to in on for with at by is it this that day part live stream vod my your we i "
-           "new full first last 24 7 24/7 marathon giveaway giveaways ps5".split())
+# stream-title filler that makes searches worse (any creator, any game)
+STOP = set("the a an and or of to in on for with at by is it this that day part live stream streaming vod my your "
+           "we i new full first last 24 7 24/7 marathon subathon giveaway giveaways ps5 xbox pc drops code "
+           "sponsored ad episode ep video highlights !commands".split())
 
 
 def topic_words(title, creator):
@@ -262,10 +264,84 @@ def topic_words(title, creator):
     return " ".join(w[:4])
 
 
+_YT_API = {}
+
+
+def yt_api(path, params, notes):
+    """YouTube Data API v3 (official; a key never expires). The key comes from
+    YOUTUBE_API_KEY, or is injected for www.googleapis.com by the session's
+    credential proxy (header X-goog-api-key). Returns None when unavailable."""
+    if _YT_API.get("off"):
+        return None
+    key = os.environ.get("YOUTUBE_API_KEY", "proxy-injected")
+    url = "https://www.googleapis.com/youtube/v3/" + path + "?" + urllib.parse.urlencode(params)
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"X-goog-api-key": key}), timeout=30) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        why = {400: "key missing or invalid", 403: "key rejected or daily quota used up"}.get(e.code, f"HTTP {e.code}")
+        notes.append(f"youtube data api: {why}; using yt-dlp search instead")
+    except Exception as e:  # noqa: BLE001  (host not allowed / no key saved)
+        notes.append(f"youtube data api unavailable ({type(e).__name__}); using yt-dlp search instead. "
+                     "A YouTube Data API key makes searches, view counts and dates independent of cookies")
+    _YT_API["off"] = True
+    return None
+
+
+def iso_dur(d):
+    m = re.fullmatch(r"P(?:(\d+)D)?T?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", d or "")
+    if not m:
+        return None
+    dd, h, mi, se = (int(x or 0) for x in m.groups())
+    return dd * 86400 + h * 3600 + mi * 60 + se
+
+
+def youtube_refs_api(vod, qs, per_query, max_dur, notes):
+    """Search + metadata through the Data API: views, tags, exact publish date,
+    only uploads posted after the source. None if the API is unavailable."""
+    after = None
+    if vod.get("upload_date"):
+        u = vod["upload_date"]; after = f"{u[:4]}-{u[4:6]}-{u[6:8]}T00:00:00Z"
+    ids = {}
+    for q in qs:
+        p = {"part": "id", "type": "video", "q": q, "maxResults": min(50, per_query), "order": "relevance"}
+        if after: p["publishedAfter"] = after
+        r = yt_api("search", p, notes)
+        if r is None:
+            return None
+        for it in r.get("items", []):
+            vid = (it.get("id") or {}).get("videoId")
+            if vid and vid != vod.get("id"):
+                ids.setdefault(vid, q)
+    refs = []
+    vids = list(ids)
+    for i in range(0, len(vids), 50):
+        r = yt_api("videos", {"part": "snippet,statistics,contentDetails", "id": ",".join(vids[i:i + 50])}, notes)
+        if r is None:
+            return None
+        for v in r.get("items", []):
+            sn, st = v.get("snippet", {}), v.get("statistics", {})
+            dur = iso_dur((v.get("contentDetails") or {}).get("duration"))
+            if dur is None or dur > max_dur:
+                continue
+            refs.append({"source": "youtube", "url": f"https://www.youtube.com/watch?v={v['id']}",
+                         "title": sn.get("title", ""), "views": int(st.get("viewCount", 0) or 0), "duration": dur,
+                         "uploader": sn.get("channelTitle"), "upload_date": (sn.get("publishedAt") or "")[:10].replace("-", ""),
+                         "tags": (sn.get("tags") or [])[:30],
+                         "hashtags": re.findall(r"#(\w+)", sn.get("title", "") + " " + sn.get("description", ""))[:30],
+                         "query": ids[v["id"]]})
+    notes.append(f"youtube data api: {len(refs)} uploads posted after the source from {len(qs)} searches")
+    return refs
+
+
 def youtube_refs(vod, creator, queries, channels, per_query, max_dur, cookies, notes):
     topic = topic_words(vod.get("title", ""), creator)
     qs = list(queries) or [f"{creator} {topic}".strip(), f"{creator} #shorts", f"{creator} shorts {topic}".strip(),
                            f"{creator} funny moments", f"{creator} clips {topic}".strip()]
+    if not channels:
+        api = youtube_refs_api(vod, qs, per_query, max_dur, notes)
+        if api is not None:
+            return api
     ids = {}
     for q in qs:
         d, err = ytdlp_json(f"ytsearch{per_query}:{q}", "--flat-playlist", cookies=cookies, timeout=120)
@@ -321,11 +397,16 @@ def youtube_refs(vod, creator, queries, channels, per_query, max_dur, cookies, n
 
 
 def ref_audio(url, out, max_dur, cookies):
+    """(ok, reason). reason "signin" means YouTube wants fresh cookies."""
     rc, u, err = run(ytdlp_base(cookies, url) + ["-g", "-f", "bestaudio/best", url], 120)
     if rc or not u.strip():
-        return False
-    rc, _, _ = run(ff("-i", u.strip().splitlines()[-1], "-t", str(max_dur), "-vn", "-ac", "1", "-ar", "16000", out), 300)
-    return rc == 0 and os.path.exists(out)
+        e = (err or "").lower()
+        return False, "signin" if ("sign in" in e or "cookies" in e) else "formats" if "format" in e else "other"
+    rc, _, err = run(ff("-i", u.strip().splitlines()[-1], "-t", str(max_dur), "-vn", "-ac", "1", "-ar", "16000", out), 300)
+    if rc == 0 and os.path.exists(out):
+        return True, ""
+    e = (err or "").lower()
+    return False, "blocked" if ("tunnel" in e or "connect" in e or "no rule" in e) else "other"
 
 
 def probes_for(L_sec):
@@ -414,23 +495,29 @@ def main():
 
         def dl(r):
             p = os.path.join(work, re.sub(r"\W+", "_", r["url"])[-60:] + ".wav")
-            ok = os.path.exists(p) or ref_audio(r["url"], p, a.max_ref_dur, a.cookies)
-            return r, p if ok else None
-        dl_fail = 0
+            if os.path.exists(p):
+                return r, p, ""
+            ok, why = ref_audio(r["url"], p, a.max_ref_dur, a.cookies)
+            return r, p if ok else None, why
+        fails = Counter()
         with ThreadPoolExecutor(3) as ex:
-            for i, (r, p) in enumerate(ex.map(dl, todo)):
+            for i, (r, p, why) in enumerate(ex.map(dl, todo)):
                 if not p:
-                    r["match"] = None; r["match_note"] = "audio download failed"; dl_fail += 1; continue
+                    r["match"] = None; r["match_note"] = f"audio download failed ({why})"; fails[why] += 1; continue
                 m = match_ref(M, p, a.min_z, a.min_ncc, a.min_gap)
                 if m:
                     m["t"] += a.offset; m["spans"] = [[s0 + a.offset, s1 + a.offset] for s0, s1 in m["spans"]]
                 r["match"] = m
                 print(f"\rviral: matched {i + 1}/{len(todo)}", end="", file=sys.stderr)
         print(file=sys.stderr)
-        if dl_fail:
-            notes.append(f"audio download failed for {dl_fail} of {len(todo)} uploads: YouTube audio is served "
-                         "from *.googlevideo.com, which the network must allow; also needs cookies "
-                         "(YT_COOKIES_B64) and Node + yt-dlp-ejs for YouTube's JS challenge")
+        if fails:
+            fix = {"signin": "YouTube cookies are missing or EXPIRED: export fresh cookies.txt from the spare "
+                             "account (incognito, don't sign out) and update YT_COOKIES_B64",
+                   "formats": "no audio formats: install yt-dlp-ejs and Node for YouTube's JS challenge",
+                   "blocked": "the network blocks YouTube's media servers: allow *.googlevideo.com",
+                   "other": "one-off failures (deleted/region-locked uploads); safe to ignore"}
+            for why, n in fails.most_common():
+                notes.append(f"audio download failed for {n} of {len(todo)} uploads: {fix.get(why, why)}")
 
     # merge matched spans into moments
     spans = []

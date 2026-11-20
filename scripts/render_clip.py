@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render one vertical clip in the stream format (see formats/gta6.md).
+"""Render one vertical clip in the stream format (see formats/stream.md).
 
   render_clip.py --src trimmed.mp4 --out final.mp4 --layout cam_game \
       --cam 0,0,472,264 [--game 0,0,1920,1080] \

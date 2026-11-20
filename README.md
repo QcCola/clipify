@@ -16,7 +16,7 @@ No cloud APIs. Runs entirely on your machine. No OpenCV. ~20s of work for a 20s 
 
 Most "auto-clip" tools are either expensive SaaS, slow, or produce slop. This skill is what I actually use to clip my long-form videos for LinkedIn and TikTok. Built for talking-head dialogue (interviews, podcasts, two-person setups).
 
-## Stream mode (Twitch / YouTube VODs, GTA-style gameplay + facecam)
+## Stream mode (any Twitch VOD or YouTube video, any creator)
 
 Paste a VOD link and the skill clips it without downloading the whole stream:
 
@@ -25,10 +25,10 @@ Paste a VOD link and the skill clips it without downloading the whole stream:
 3. **Scout every hour** (`scripts/scout.py`): loudness reactions, quiet-setup → burst *comedic timing*, laughter rhythm, in-game impacts (crashes, gunfire), optional chat-export laugh spikes, and the proven viral moments, with an hourly coverage floor.
 4. **Transcribe every candidate window** in one Whisper pass and read for setup → punchline → reaction (`scripts/transcribe.py`).
 5. **Pick and rank 10 clips**, each self-contained and 30 s or shorter (`render_clip.py` enforces the cap).
-6. **Render in the stream format** (`scripts/render_clip.py`, rules in `formats/gta6.md`): 720×1280, facecam over gameplay / gameplay only / facecam only, sharp panels over a blurred fill, an emoji **hook title** at the top, Barlow Bold sentence-case captions with one warm-yellow emphasis word (`scripts/make_phrases.py`), verified H.264/AAC output.
-7. **Post kit** (`scripts/post_kit.py`): per clip, ready-to-paste TikTok / Reels / YouTube Shorts / X posts (title, caption, source credit, 4–8 hashtags), checked against platform limits, plus a ranked `posts.md`.
+6. **Render in the stream format** (`scripts/render_clip.py`, rules in `formats/stream.md`, plus optional per-game presets like `formats/gta6.md`): 720×1280, facecam over gameplay / gameplay only / facecam only, sharp panels over a blurred fill, an emoji **hook title** at the top, Barlow Bold sentence-case captions with one warm-yellow emphasis word (`scripts/make_phrases.py`), verified H.264/AAC output.
+7. **Post kit** (`scripts/post_kit.py`): per clip, ready-to-paste TikTok / Reels / YouTube Shorts / X posts (title, caption, source credit, 4–8 hashtags), checked against platform limits, plus a ranked `posts.md`. Clips are split into **proven** (the moment already blew up in others' posts, with the evidence) and **fresh** (nobody has posted it yet).
 
-Optional for the cross-check: `TWITCH_CLIENT_ID` + `TWITCH_CLIENT_SECRET` (fresh token every run) or an app access token (`TWITCH_TOKEN`, expires in ~60 days) for Twitch clips, and, for YouTube from cloud/datacenter IPs, cookies from a spare account (`YT_COOKIES_B64` = base64 of cookies.txt, or `--cookies cookies.txt`), Node + `pip install yt-dlp-ejs` for YouTube's JS challenge, and `*.googlevideo.com` reachable.
+Optional for the cross-check: `TWITCH_CLIENT_ID` + `TWITCH_CLIENT_SECRET` (fresh token every run) or an app access token (`TWITCH_TOKEN`, expires in ~60 days) for Twitch clips, a YouTube Data API key (`YOUTUBE_API_KEY`, never expires) for YouTube search and view counts, and, to audio-match YouTube clips from cloud/datacenter IPs, cookies from a spare account (`YT_COOKIES_B64` = base64 of cookies.txt, or `--cookies cookies.txt`), Node + `pip install yt-dlp-ejs` for YouTube's JS challenge, and `*.googlevideo.com` reachable.
 
 Fonts: Barlow Bold is bundled (`fonts/`, SIL OFL). Emoji need Noto Color Emoji (Linux: `apt install fonts-noto-color-emoji`) or Apple Color Emoji. Extra Python deps: `pip install yt-dlp pillow faster-whisper` (faster-whisper downloads its model from Hugging Face once).
 
@@ -96,7 +96,8 @@ clipify/
 │   ├── make_phrases.py# stream mode: editable caption phrases
 │   ├── render_clip.py # stream mode: 9:16 render, 30 s cap, output checks
 │   └── post_kit.py    # stream mode: post-ready captions + hashtags per platform
-├── formats/gta6.md    # the stream clip format guide
+├── formats/stream.md  # the clip format guide (any creator)
+├── formats/gta6.md    # optional preset for GTA 6 sources
 └── README.md
 ```
 

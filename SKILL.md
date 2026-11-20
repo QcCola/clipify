@@ -14,9 +14,9 @@ Pick one before Step 1. The choice changes how you find moments and whether capt
 - **Dialogue mode** (default for podcasts, interviews, talking-heads): Whisper transcribes, you scan for punchlines / reactions / awkward pauses. → Step 1A. Captions in Step 5.
 - **Action mode** (woodchopping, sports, percussion, drumming, anything with repeated impact sounds): skip Whisper entirely, run `detect_transients.py` to find each strike, cut on each one. → Step 1B. Skip Step 5; the strike sounds *are* the rhythm.
 - **Hybrid**: dialogue mode for talking sections, action mode for the rest, intercut. Use both 1A and 1B.
-- **Stream mode** (a Twitch/YouTube VOD or any multi-hour gameplay recording with facecam, e.g. GTA 6 streams): never download the whole video. Fetch audio only, scout every hour for comedic timing, reactions and in-game action, transcribe all candidate windows, pick by editorial judgment, then fetch and render only the winners in the **stream format** (`formats/gta6.md`). → follow **Stream mode workflow** below and skip Steps 1A–6.
+- **Stream mode** (any Twitch VOD or YouTube video from any creator: gameplay with facecam, Just Chatting, IRL, podcasts, regular YouTube videos): never download the whole video. Fetch audio only, check what others already posted, scout for comedic timing, reactions and on-screen action, transcribe all candidate windows, pick by editorial judgment, then fetch and render only the winners in the **stream format** (`formats/stream.md`, plus a game/category preset such as `formats/gta6.md` when one exists). → follow **Stream mode workflow** below and skip Steps 1A–6.
 
-If the user pastes a twitch.tv / youtube.com link to a stream, or mentions streams/GTA/VODs, you're in stream mode. If the user says "I'm not talking in this," you're in action mode. If they say "cut on each X" (chop, hit, punch, drumbeat, swing, footstep), you're in action mode. Default to dialogue mode otherwise.
+If the user pastes a twitch.tv / youtube.com link, or mentions streams, VODs or a creator's videos, you're in stream mode. Nothing in it is tied to one creator or game: the creator, platform, hashtags and layout come from the source each time. If the user says "I'm not talking in this," you're in action mode. If they say "cut on each X" (chop, hit, punch, drumbeat, swing, footstep), you're in action mode. Default to dialogue mode otherwise.
 
 ## Inputs
 
@@ -51,7 +51,7 @@ Working dir: `/tmp/clipify/` (mkdir at start, leave artifacts for debugging).
 
 ## Stream mode workflow
 
-The format rules live in `<skill-dir>/formats/gta6.md` (the user's clip format guide). Read it at the start of every stream batch; if the user attaches an updated guide, it overrides the bundled one for that batch. Below is how the code implements it.
+The format rules live in `<skill-dir>/formats/stream.md` (the user's clip format guide, for any creator). Read it at the start of every stream batch, plus `formats/<preset>.md` when the source's game or category has one (e.g. `gta6.md`); a preset only adds to or overrides the guide. If the user attaches an updated guide, it overrides the bundled one for that batch. To support a new game or category often, add a short preset file rather than editing the guide. Below is how the code implements it.
 
 **Every batch delivers exactly 10 post-ready clips, ranked best to worst, each 30 s or shorter**, with a caption, hashtags and source credit ready to paste. Clips must stand alone for a newcomer; a moment that needs context only qualifies if that context fits in the first few seconds of the clip.
 
@@ -84,7 +84,7 @@ python3 $S/scout.py audio.wav --windows win --viral viral.json [--chat chat.json
 `viral.py` cross-references the stream against clips other people already posted:
 
 - **Twitch clips cut from this VOD** (official Helix API, exact VOD offsets and view counts). Needs the user's Twitch developer app: `TWITCH_CLIENT_ID` in the environment plus either `TWITCH_CLIENT_SECRET` (the script mints a fresh app token at `id.twitch.tv` every run, so nothing expires; that host must be allowed, and no credential may be saved for `api.twitch.tv`, since a saved one overrides the minted token) or an app access token (`TWITCH_TOKEN`, or saved as the session's credential for `api.twitch.tv`; expires in ~60 days). Without it the script skips Twitch and says so; tell the user once, don't block on it. Never borrow another site's client ID.
-- **YouTube Shorts / clip-channel uploads** of the creator and the stream's topic (yt-dlp search; add `--yt-channel` for known clip channels, `--query` for better searches). Each upload is audio-matched against the stream (onset envelopes, ~1 s per probe on a 21 h stream). A match must correlate well and clearly beat the best match anywhere else (`--min-gap`): repeated sounds (alert jingles, intro music in compilations) match many places almost equally and are rejected; real matches win by 0.16–0.65. Compilations mixing several streamers rarely match; dedicated Shorts do. From datacenter IPs YouTube demands sign-in past search, so the session needs: cookies from a spare account (`YT_COOKIES_B64` environment variable: the Netscape cookies.txt base64-encoded on one line; or `--cookies FILE`; `fetch.py` writes it to `~/.config/clipify/cookies.txt`, mode 0600), Node plus `yt-dlp-ejs` for YouTube's JS challenge, and `*.googlevideo.com` allowed for the audio. Without them the script keeps titles/views as unlocated `hints` and says what is missing.
+- **YouTube Shorts / clip-channel uploads** of the creator and the source's topic, posted after the source. Searches, view counts, dates and tags come from the official **YouTube Data API** when a key is available (`YOUTUBE_API_KEY`, or saved as the session's credential for `www.googleapis.com` with header `X-goog-api-key`; the key never expires, ~100 searches a day free); otherwise from yt-dlp search. Add `--yt-channel` for known clip channels (always scanned via yt-dlp), `--query` for better searches. Each upload is audio-matched against the stream (onset envelopes, ~1 s per probe on a 21 h stream). A match must correlate well and clearly beat the best match anywhere else (`--min-gap`): repeated sounds (alert jingles, intro music in compilations) match many places almost equally and are rejected; real matches win by 0.16–0.65. Compilations mixing several streamers rarely match; dedicated Shorts do. From datacenter IPs YouTube demands sign-in past search, so the session needs: cookies from a spare account (`YT_COOKIES_B64` environment variable: the Netscape cookies.txt base64-encoded on one line; or `--cookies FILE`; `fetch.py` writes it to `~/.config/clipify/cookies.txt`, mode 0600), Node plus `yt-dlp-ejs` for YouTube's JS challenge, and `*.googlevideo.com` allowed for the audio. Without them the script keeps titles/views as unlocated `hints` and says exactly what is missing; when YouTube asks for sign-in again, the cookies have expired: tell the user to export fresh ones from the spare account (no tool can refresh them automatically: Google blocks automated logins).
 
 Read `viral.json`: `moments` are located spans with views and source titles (proven moments); `hints` are popular titles you can search for in the digest by keyword; `hashtags` is the tag pool real uploads used. A fresh VOD may have no clips yet: then the batch rests on your own judgment, and you say so.
 
@@ -129,7 +129,7 @@ python3 $S/fetch.py frames "$URL" frames <start> <payoff> <end> ... --sheet shee
 
 Read the sheet. Confirm the payoff is actually on screen, and identify the **layout at that moment** — streams switch scenes (dashboard, full-screen cam, gameplay with cam overlay). Pick per clip:
 
-- `cam_game` (default) — hook on top, facecam panel, captions, then gameplay **filling the bottom of the canvas edge to edge**, cropped in from the sides just enough to fit. Measure two regions from a frame (source pixels `x,y,w,h`): `--cam` = the facecam overlay, `--game` = the **clean gameplay area** between overlays and HUD widgets (stream counters, alerts) so the crop never shows them. Clix's GTA layout at 1080p: `--cam 2,0,472,264 --game 476,0,1220,1080`. Use `--game-focus cx,cy` to keep the action in frame when it's off-centre, and `--wide` to show the whole 16:9 shot instead when the payoff spans the full width (two cars from opposite edges).
+- `cam_game` (default) — hook on top, facecam panel, captions, then gameplay **filling the bottom of the canvas edge to edge**, cropped in from the sides just enough to fit. Measure two regions from a frame (source pixels `x,y,w,h`): `--cam` = the facecam overlay, `--game` = the **clean gameplay area** between overlays and HUD widgets (stream counters, alerts) so the crop never shows them. Example, a 1080p stream with the cam overlay top-left and a stats widget on the right: `--cam 2,0,472,264 --game 476,0,1220,1080`. Measure every creator, and every batch: overlays move. For 4K sources, measure in 4K pixels. Use `--game-focus cx,cy` to keep the action in frame when it's off-centre, and `--wide` to show the whole 16:9 shot instead when the payoff spans the full width (two cars from opposite edges).
 - `game` — gameplay carries it alone (also when there is no cam).
 - `cam_only` — the moment makes sense with the gameplay hidden; crop the cam ROI loosely enough to show what happened in the room.
 
@@ -146,13 +146,13 @@ python3 $S/make_phrases.py raw_N.json [--offset <trim-start>] > phrases_N.json
 
 Edit `phrases_N.json` by ear: fix misheard names and words (whisper hears "chat" as "Chad", "chug" as "Chuck"), delete hallucinations ("Exclamation mark"), and set `emph` on at most one word or phrase per caption where emphasis helps the line land (rendered warm yellow). Keep the punchline appearing exactly when it is spoken. If you trim the head with `render_clip.py --start T`, build phrases with `--offset T`.
 
-Write the **hook**: one short line plus one emoji that makes a newcomer curious without spoiling the payoff ("He knew a shortcut", "🎨 Clix found the best paying job in GTA 6", "😭 Nobody got him breakfast"). It renders at the top in Barlow Bold 58 px; it wraps to two lines at most.
+Write the **hook**: one short line plus one emoji that makes a newcomer curious without spoiling the payoff ("He knew a shortcut", "🎨 He found the best paying job in the game", "😭 Nobody got him breakfast"). It renders at the top in Barlow Bold 58 px; it wraps to two lines at most.
 
 ### S7 — Render in the stream format
 
 ```bash
 python3 $S/render_clip.py --src raw_N.mp4 --out out/NN_slug.mp4 --layout cam_game \
-  --cam 2,0,472,264 --game 476,0,1220,1080 --hook "🎨 Clix found the best paying job in GTA 6" --phrases phrases_N.json
+  --cam 2,0,472,264 --game 476,0,1220,1080 --hook "🎨 He found the best paying job in the game" --phrases phrases_N.json
 ```
 
 720×1280: hook, facecam panel and captions over a blurred, darkened duplicate, gameplay filling the bottom; original audio once, source fps up to 60, H.264/AAC, square pixels. Captions sit in the free band between the panels (never on the face or the action), inside the middle 80 %, above the bottom 20 %. The script verifies size/SAR/codecs/fps and exits 1 on a mismatch. Optional: `--game-zoom` to push in further (only if the cause of the payoff stays visible), `--wide`, `--cam-width`, `--hook-dur`, `--start/--end` to trim. `--layout stack` is a full-bleed alternative (cam fills the top 30 %, no blur). `--whisper raw_N.json --style karaoke` gives word-highlight captions instead of guide captions if the user asks.
@@ -163,34 +163,39 @@ Make a contact sheet of every render (`ffmpeg -i out/NN.mp4 -vf "fps=1/2,scale=1
 
 ### S9 — Deliver
 
-Write `clipify_out/<vod-id>/clips.json` (format in `post_kit.py --help`): per clip its rank, file, a short spoiler-free title, a caption, and its own hashtags; at batch level the creator, platform, VOD link and the format guide's evergreen `base_tags`. Captions and hashtags follow the format guide's **Posting** section; take relevant tags from `viral.json`'s pool, never off-topic ones because they're popular. Then:
+Write `clipify_out/<vod-id>/clips.json` (format in `post_kit.py --help`): per clip its rank, file, a short spoiler-free title, a caption, its own hashtags, and its `source_start`/`source_end` in seconds; at batch level the creator, platform, source link and evergreen `base_tags` (the game/category tag, the creator's name tag, #twitchclips for Twitch). Captions and hashtags follow the format guide's **Posting** section; take relevant tags from `viral.json`'s pool, never off-topic ones because they're popular. Then:
 
 ```bash
-python3 $S/post_kit.py clipify_out/<vod-id>/clips.json --viral viral.json     # --expect 10 --max-dur 30 by default
+python3 $S/post_kit.py clipify_out/<vod-id>/clips.json --viral viral.json --sort     # --expect 10 --max-dur 30 by default
 ```
 
 It refuses (exit 1, listing problems) unless the batch is exactly 10 ranked clips, each ≤ 30 s, with a 1–150 char caption, 4–8 clean hashtags, a Shorts title ≤ 100 chars. Fix and rerun until it passes.
 
+`--sort` splits the batch, keeping the overall ranks: **proven** clips overlap a moment others already posted that blew up for this creator (top 5% of the source's posted moments by views, at least 50, capped at 1,000 so big creators aren't held to an impossible bar); **fresh** clips are moments nobody has posted yet. Each post file states which and why (views, titles). There's no quota: rank on quality, then report how the 10 split.
+
 ```
 clipify_out/<vod-id>/
-  queue/    NN_slug.mp4    the 10 clips, ranked (01 = best)
-            NN_slug.txt    ready-to-paste TikTok / Reels / YouTube Shorts (title + description) / X posts
+  queue/proven/ NN_slug.mp4  clips whose moment already blew up elsewhere (overall rank in the name)
+                NN_slug.txt  ready-to-paste TikTok / Reels / YouTube Shorts (title + description) / X posts + the evidence
+  queue/fresh/  NN_slug.mp4  clips of moments nobody has posted yet
+                NN_slug.txt
   review/   NN_slug.mp4    extras held back: unclear third-party audio, permission questions, layout problems
   clips.json               your batch spec
-  posts.md                 ranked table (title, source time, length, why) + every post, + the viral hashtag pool
+  posts.md                 proven and fresh tables (rank, title, source time, length, why, evidence) + every post + the viral hashtag pool
   posts.json               the same, machine-readable
 ```
 
-Report the ranked list in chat (one line each: rank, title, length, why) and send the files. Drafts stay out of `queue/`; held clips don't count toward the 10.
+Report the ranked list in chat, grouped proven / fresh (one line each: rank, title, length, why), and send the files. Drafts stay out of `queue/`; held clips don't count toward the 10.
 
 ### Stream-mode pitfalls
 
 - **Muted audio:** Twitch replaces DMCA'd music with silence. `scout.py` ignores muted stretches and the 30 s around them; never build a clip on a muted payoff.
-- **Layout drift:** the first hour of a stream is often setup (dashboards, full-screen cam). The GTA layout ROI does not apply there — look at the frames.
+- **Layout drift:** the first hour of a stream is often setup (dashboards, full-screen cam). The gameplay layout ROI does not apply there — look at the frames.
 - **Other people's camera:** a full-screen face may be a guest or another streamer, not the streamer — check before calling it a facecam clip.
 - **Don't trust a loudness peak alone:** the dry run's loudest peaks were giveaway logistics; the best clips (a $12 painting job, a chat "CHUG" chant) came from reading the words. Always run S4.
-- **Facecam overlay size changes between streams:** measure `--cam` on a frame from each batch (Clix's overlay was 472×264 in one stream and ~470×350 in another, which cut his face off at the default). Keep the game HUD (health bar) out of the cam crop.
+- **Facecam overlay size changes between streams:** measure `--cam` on a frame from each batch (one creator's overlay was 472×264 in one stream and ~470×350 in the next, which cut the face off at the old size). Keep game HUD elements (health bars) out of the cam crop.
 - **Viral ≠ fits the format:** a moment other people clipped as a 3-minute segment still has to work in ≤ 30 s without context. And a creator's most-used tags can be from another game; pick hashtags per clip.
+- **YouTube videos (not streams)** usually have no facecam overlay and many scene cuts: use `game` (main picture only) or a speaker crop, and trim each clip to one shot where possible.
 - **Generated video elements** (e.g. Higgsfield Seedance in the format guide) are not available to this skill: mark them "generation pending" and keep original footage.
 
 ---
