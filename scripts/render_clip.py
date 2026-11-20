@@ -6,6 +6,13 @@
       --hook "😭 He got paid $12 to paint" --phrases phrases.json [--emph-check]
 
 Layouts (canvas default 720x1280, 9:16):
+  stack     (default for facecam streams) full-bleed split, no gaps or blur:
+            facecam fills the top --split of the canvas (default 30%), zoomed
+            in on the face (--cam-zoom, --cam-focus); gameplay fills the rest,
+            cropped from the centre (--game-focus, --game-zoom) just enough to
+            fit. Hook sits on the seam; captions in the lower gameplay, above
+            the bottom 20%. The gameplay crop loses the frame's sides: when the
+            payoff spans the full width (cars from opposite edges), use cam_game.
   game      sharp gameplay panel (full wide shot) centred over a blurred,
             darkened duplicate; captions under the panel.
   cam_game  facecam panel on top, captions in the gap, gameplay panel below;
@@ -145,7 +152,15 @@ def main():
     ap.add_argument("--start", type=float, default=0, help="trim: seconds into --src (captions must be relative to this; see make_phrases.py --offset)")
     ap.add_argument("--end", type=float, default=None, help="trim: end time in --src seconds")
     ap.add_argument("--out", required=True)
-    ap.add_argument("--layout", choices=["game", "cam_game", "cam_only"], required=True)
+    ap.add_argument("--layout", choices=["cam_game", "stack", "game", "cam_only"], default="cam_game")
+    ap.add_argument("--wide", action="store_true", help="cam_game: show the whole 16:9 gameplay shot (letterboxed) "
+                    "instead of filling the canvas; use when the payoff spans the full width")
+    ap.add_argument("--split", type=float, default=0.30, help="stack: fraction of canvas height for the facecam")
+    ap.add_argument("--cam-zoom", type=float, default=1.15, help="stack: zoom into the cam beyond fill (1 = just fill)")
+    ap.add_argument("--cam-focus", help="stack: cx,cy in source px to centre the cam crop on (default: ROI centre)")
+    ap.add_argument("--game-zoom", type=float, default=1.0, help="cam_game/stack: zoom into gameplay beyond fill")
+    ap.add_argument("--game-focus", help="cam_game/stack: cx,cy in source px to centre the gameplay crop on (default: centre)")
+    ap.add_argument("--hook-pos", choices=["auto", "top", "seam"], default="auto")
     ap.add_argument("--cam", help="facecam ROI x,y,w,h in source pixels")
     ap.add_argument("--game", help="gameplay ROI x,y,w,h (default: full frame)")
     ap.add_argument("--cam-width", type=int, default=None, help="facecam panel width on canvas")
@@ -170,7 +185,7 @@ def main():
     out_fps = min(fps, a.max_fps)
     game = roi(a.game) if a.game else (0, 0, sw, sh)
     cam = roi(a.cam) if a.cam else None
-    if a.layout in ("cam_game", "cam_only") and not cam:
+    if a.layout in ("stack", "cam_game", "cam_only") and not cam:
         sys.exit("--cam x,y,w,h is required for this layout")
 
     tmp = tempfile.mkdtemp(prefix="clipify_render_")
@@ -184,8 +199,27 @@ def main():
     text_floor = int(H * 0.80)          # captions must end above bottom 20%
 
     # panel geometry
-    panels = []  # (name, roi, x, y, w, h)
-    if a.layout == "game":
+    panels = []  # (name, source crop x,y,w,h, canvas x, y, w, h)
+
+    def fill_crop(r, aspect, zoom, focus):
+        """Largest aspect-correct box inside ROI r, shrunk by zoom, centred on focus, clamped to r."""
+        rx, ry, rw, rh = r
+        if rw / rh > aspect: ch_, cw_ = rh, rh * aspect
+        else: cw_, ch_ = rw, rw / aspect
+        cw_, ch_ = cw_ / zoom, ch_ / zoom
+        fx, fy = focus if focus else (rx + rw / 2, ry + rh / 2)
+        x0 = min(max(rx, fx - cw_ / 2), rx + rw - cw_); y0 = min(max(ry, fy - ch_ / 2), ry + rh - ch_)
+        return (even(x0), even(y0), even(cw_), even(ch_))
+
+    def pt(sv):
+        return tuple(float(v) for v in sv.split(",")) if sv else None
+
+    if a.layout == "stack":
+        ch = even(H * a.split); gh = H - ch
+        panels.append(("cam", fill_crop(cam, W / ch, a.cam_zoom, pt(a.cam_focus)), 0, 0, W, ch))
+        panels.append(("game", fill_crop(game, W / gh, a.game_zoom, pt(a.game_focus)), 0, ch, W, gh))
+        cap_top = None                  # bottom-anchored: block ends at 80% height
+    elif a.layout == "game":
         gw = W; gh = even(gw * game[3] / game[2])
         stack = gh + GAP + CAPTION_BLOCK
         y0 = max(content_top, (H - stack) // 2)
@@ -193,19 +227,34 @@ def main():
         panels.append(("game", game, 0, even(y0), gw, gh))
         cap_top = y0 + gh + GAP
     elif a.layout == "cam_game":
-        gw = W; gh = even(gw * game[3] / game[2])
+        # hook on top, facecam panel, captions in the gap, then gameplay filling the rest of
+        # the canvas to the bottom edge: cropped in from the sides just enough to fit
+        # (--game-zoom / --game-focus); --wide keeps the whole 16:9 shot letterboxed instead
         cw = even(a.cam_width or int(W * 0.78)); ch = even(cw * cam[3] / cam[2])
-        avail = H - 24 - content_top
-        stack = ch + GAP + CAPTION_BLOCK + GAP + gh
-        if stack > avail:              # shrink the cam panel until everything fits
-            ch = even(max(160, ch - (stack - avail))); cw = even(ch * cam[2] / cam[3])
-            stack = ch + GAP + CAPTION_BLOCK + GAP + gh
-        y0 = content_top + max(0, (avail - stack) // 2)
+        y0 = content_top
         cap_top = y0 + ch + GAP
-        if cap_top + CAPTION_BLOCK > text_floor:   # pull everything up
-            y0 -= cap_top + CAPTION_BLOCK - text_floor; y0 = max(content_top, y0); cap_top = y0 + ch + GAP
+        if cap_top + CAPTION_BLOCK > text_floor:
+            ch = even(text_floor - CAPTION_BLOCK - GAP - y0); cw = even(ch * cam[2] / cam[3]); cap_top = y0 + ch + GAP
         panels.append(("cam", cam, (W - cw) // 2, even(y0), cw, ch))
-        panels.append(("game", game, 0, even(cap_top + CAPTION_BLOCK + GAP), gw, gh))
+        gy = even(cap_top + CAPTION_BLOCK + GAP)
+        if a.wide:
+            gh = even(W * game[3] / game[2])
+            panels.append(("game", game, 0, gy + max(0, (H - gy - gh) // 2), W, gh))
+        else:
+            gh = H - gy
+            gc = fill_crop(game, W / gh, a.game_zoom, pt(a.game_focus))
+            # slide the crop sideways off the stream's embedded facecam if a small shift does it
+            # (cleaner than blurring a patch over it)
+            gx0, gy0, gw0, gh0 = gc
+            ox, oy, ow, oh = cam
+            if ox < gx0 + gw0 and ox + ow > gx0:
+                gx_min, gx_max = game[0], game[0] + game[2] - gw0
+                right = ox + ow                     # overlay on the left: start after it
+                left = ox - gw0                     # overlay on the right: end before it
+                for nx in sorted([right, left], key=lambda v: abs(v - gx0)):
+                    if gx_min <= nx <= gx_max and abs(nx - gx0) <= 0.15 * game[2]:
+                        gc = (even(nx + 1), gy0, gw0, gh0); break
+            panels.append(("game", gc, 0, gy, W, gh))
     else:  # cam_only
         cw = even(a.cam_width or W); ch = even(cw * cam[3] / cam[2])
         max_h = text_floor - GAP - CAPTION_BLOCK - content_top
@@ -213,7 +262,7 @@ def main():
         y0 = content_top + max(0, (text_floor - GAP - CAPTION_BLOCK - content_top - ch) // 2)
         panels.append(("cam", cam, (W - cw) // 2, even(y0), cw, ch))
         cap_top = y0 + ch + GAP
-    cap_top = int(cap_top)
+    cap_top = int(cap_top) if cap_top is not None else None
 
     # captions
     ass = None
@@ -233,7 +282,7 @@ def main():
     last = "bg"
     for i, (name, (x, y, w, h), px, py, pw, ph) in enumerate(panels):
         src = f"p{i}"
-        if name == "game" and a.layout == "cam_game" and cam and not a.keep_overlay:
+        if name == "game" and a.layout in ("cam_game", "stack") and cam and not a.keep_overlay:
             cx, cy, cw_, ch_ = cam
             ix, iy = max(cx, x), max(cy, y)
             iw, ih = min(cx + cw_, x + w) - ix, min(cy + ch_, y + h) - iy
@@ -248,7 +297,10 @@ def main():
     if hook_png:
         inputs += ["-loop", "1", "-i", hook_png]
         en = f":enable='lt(t,{a.hook_dur})'" if a.hook_dur else ""
-        f.append(f"[{last}][1:v]overlay=0:{top_y}:shortest=1{en}[lh]")
+        hook_y = top_y
+        if a.hook_pos == "seam" or (a.hook_pos == "auto" and a.layout == "stack"):
+            hook_y = max(0, panels[0][5] - hook_h // 2)     # straddle the cam/gameplay edge
+        f.append(f"[{last}][1:v]overlay=0:{hook_y}:shortest=1{en}[lh]")
         last = "lh"
     if ass:
         esc = ass.replace(":", "\\:")

@@ -104,7 +104,7 @@ python3 $S/fetch.py frames "$URL" frames <start> <payoff> <end> ... --sheet shee
 
 Read the sheet. Confirm the payoff is actually on screen, and identify the **layout at that moment** — streams switch scenes (dashboard, full-screen cam, gameplay with cam overlay). Pick per clip:
 
-- `cam_game` — gameplay with facecam overlay: measure the overlay ROI (`x,y,w,h` in source pixels; e.g. Clix's GTA layout is `2,0,472,264` at 1080p). The embedded overlay is blurred out of the gameplay panel automatically (`--keep-overlay` to keep it).
+- `cam_game` (default) — hook on top, facecam panel, captions, then gameplay **filling the bottom of the canvas edge to edge**, cropped in from the sides just enough to fit. Measure two regions from a frame (source pixels `x,y,w,h`): `--cam` = the facecam overlay, `--game` = the **clean gameplay area** between overlays and HUD widgets (stream counters, alerts) so the crop never shows them. Clix's GTA layout at 1080p: `--cam 2,0,472,264 --game 476,0,1220,1080`. Use `--game-focus cx,cy` to keep the action in frame when it's off-centre, and `--wide` to show the whole 16:9 shot instead when the payoff spans the full width (two cars from opposite edges).
 - `game` — gameplay carries it alone (also when there is no cam).
 - `cam_only` — the moment makes sense with the gameplay hidden; crop the cam ROI loosely enough to show what happened in the room.
 
@@ -127,10 +127,10 @@ Write the **hook**: one short line plus one emoji that makes a newcomer curious 
 
 ```bash
 python3 $S/render_clip.py --src raw_N.mp4 --out out/NN_slug.mp4 --layout cam_game \
-  --cam 2,0,472,264 --hook "🎨 Clix found the best paying job in GTA 6" --phrases phrases_N.json
+  --cam 2,0,472,264 --game 476,0,1220,1080 --hook "🎨 Clix found the best paying job in GTA 6" --phrases phrases_N.json
 ```
 
-720×1280, sharp centred panel(s) over a blurred, darkened duplicate, original audio once, source fps up to 60, H.264/AAC, square pixels. Captions sit in the free band between the panels (never on the face or the action), inside the middle 80 %, above the bottom 20 %. The script verifies size/SAR/codecs/fps and exits 1 on a mismatch. Optional: `--game x,y,w,h` to enlarge the gameplay (only if the cause of the payoff stays visible — for two cars approaching from opposite edges keep the full wide shot), `--cam-width`, `--hook-dur`. `--whisper raw_N.json --style karaoke` gives word-highlight captions instead of guide captions if the user asks.
+720×1280: hook, facecam panel and captions over a blurred, darkened duplicate, gameplay filling the bottom; original audio once, source fps up to 60, H.264/AAC, square pixels. Captions sit in the free band between the panels (never on the face or the action), inside the middle 80 %, above the bottom 20 %. The script verifies size/SAR/codecs/fps and exits 1 on a mismatch. Optional: `--game-zoom` to push in further (only if the cause of the payoff stays visible), `--wide`, `--cam-width`, `--hook-dur`, `--start/--end` to trim. `--layout stack` is a full-bleed alternative (cam fills the top 30 %, no blur). `--whisper raw_N.json --style karaoke` gives word-highlight captions instead of guide captions if the user asks.
 
 ### S8 — Watch as a newcomer
 
