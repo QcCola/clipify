@@ -38,7 +38,7 @@ If the user pastes a twitch.tv / youtube.com link to a stream, or mentions strea
   - `detect_transients.py` — find sharp impact sounds (action mode); see `--help`
   - `fetch.py` — stream mode: VOD info, parallel audio-only download, frame-accurate clip, labelled frame contact sheets
   - `scout.py` — stream mode: score every second for reaction / comedic payoff / laughter / in-game impacts / chat, with hourly coverage; writes candidate windows
-  - `transcribe.py` — stream mode: one-process whisper over all windows → markdown digest with absolute timestamps
+  - `transcribe.py` — stream mode: faster-whisper over all windows → markdown digest with absolute timestamps; `--file` for one clip's caption transcript
   - `make_phrases.py` — whisper words → editable sentence-case caption phrases (natural breaks, ≤2 lines, `emph` word)
   - `render_clip.py` — stream format renderer: 720×1280 layouts (`game`, `cam_game`, `cam_only`) over a blurred fill, emoji hook title, captions, output verification
 - **Fonts:** `<skill-dir>/fonts/Barlow-Bold.ttf` (bundled, OFL). Emoji need Noto Color Emoji (`fonts-noto-color-emoji`) or Apple Color Emoji. Hooks render through Pillow (`pip install pillow`).
@@ -59,7 +59,7 @@ Set `S=<skill-dir>/scripts`, `URL=<vod link>`, work in `/tmp/clipify/<vod-id>/`.
 python3 $S/fetch.py info "$URL"
 ```
 
-Note duration, fps, resolution. Give the user a time estimate before the long steps (4 CPU, no GPU: audio download ≈ 1–2 min per 14 h; scout ≈ 1 min per 14 h; transcription ≈ 2 min per hour of stream at 6 candidates/hour; each render ≈ 20 s). If the stream is very long and the user hasn't scoped it, ask whether to do all of it or a range.
+Note duration, fps, resolution. Give the user a time estimate before the long steps (4 CPU, no GPU: audio download ≈ 1–2 min per 14 h; scout ≈ 1 min per 14 h; window transcription with faster-whisper small.en ≈ 40 s per hour of stream at 6 candidates/hour (≈ 15 s with `--model tiny.en`); per final clip ≈ 1.5 min caption transcription + 20 s render). If the stream is very long and the user hasn't scoped it, ask whether to do all of it or a range.
 
 If a host is blocked, `fetch.py` prints `media host: …` — that host (e.g. a per-VOD `*.cloudfront.net` for Twitch) needs to be allowed in the environment. YouTube from datacenter IPs often demands sign-in: ask the user for `cookies.txt` (`--cookies`).
 
@@ -82,8 +82,10 @@ Audio can find *when* something happened, not *whether it's funny*. The scout's 
 ### S4 — Read every window for the payoff
 
 ```bash
-python3 $S/transcribe.py candidates.json win > digest.md
+python3 $S/transcribe.py candidates.json win > digest.md     # faster-whisper small.en
 ```
+
+faster-whisper's model downloads once from Hugging Face; if those hosts are blocked the script falls back to openai-whisper (slower — then pass `--model tiny.en`).
 
 Read the whole digest. For each candidate, look for:
 
@@ -113,11 +115,11 @@ If a reaction needs the game to explain it, use `cam_game`. Scene switches mid-c
 ```bash
 python3 $S/fetch.py clip "$URL" <start> <dur> raw_N.mp4
 ffmpeg -nostdin -loglevel error -y -i raw_N.mp4 -vn -ac 1 -ar 16000 raw_N.wav
-whisper raw_N.wav --model small.en --word_timestamps True --output_format json --output_dir . --language en --fp16 False
-python3 $S/make_phrases.py raw_N.json > phrases_N.json
+python3 $S/transcribe.py --file raw_N.wav --out raw_N.json     # openai-whisper small.en: best punctuation + timing
+python3 $S/make_phrases.py raw_N.json [--offset <trim-start>] > phrases_N.json
 ```
 
-Edit `phrases_N.json` by ear: fix misheard names and words (whisper hears "chat" as "Chad", "chug" as "Chuck"), delete hallucinations ("Exclamation mark"), and set `emph` on at most one word or phrase per caption where emphasis helps the line land (rendered warm yellow). Keep the punchline appearing exactly when it is spoken. Use `small.en` here — accuracy matters more than speed on a 20–45 s clip.
+Edit `phrases_N.json` by ear: fix misheard names and words (whisper hears "chat" as "Chad", "chug" as "Chuck"), delete hallucinations ("Exclamation mark"), and set `emph` on at most one word or phrase per caption where emphasis helps the line land (rendered warm yellow). Keep the punchline appearing exactly when it is spoken. If you trim the head with `render_clip.py --start T`, build phrases with `--offset T`.
 
 Write the **hook**: one short line plus one emoji that makes a newcomer curious without spoiling the payoff ("He knew a shortcut", "🎨 Clix found the best paying job in GTA 6", "😭 Nobody got him breakfast"). It renders at the top in Barlow Bold 58 px; it wraps to two lines at most.
 

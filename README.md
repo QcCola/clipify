@@ -25,7 +25,7 @@ Paste a VOD link and the skill clips it without downloading the whole stream:
 3. **Transcribe every candidate window** in one Whisper pass and read for setup → punchline → reaction (`scripts/transcribe.py`).
 4. **Render in the stream format** (`scripts/render_clip.py`, rules in `formats/gta6.md`): 720×1280, facecam over gameplay / gameplay only / facecam only, sharp panels over a blurred fill, an emoji **hook title** at the top, Barlow Bold sentence-case captions with one warm-yellow emphasis word (`scripts/make_phrases.py`), verified H.264/AAC output.
 
-Fonts: Barlow Bold is bundled (`fonts/`, SIL OFL). Emoji need Noto Color Emoji (Linux: `apt install fonts-noto-color-emoji`) or Apple Color Emoji. Extra Python deps: `pip install yt-dlp pillow`.
+Fonts: Barlow Bold is bundled (`fonts/`, SIL OFL). Emoji need Noto Color Emoji (Linux: `apt install fonts-noto-color-emoji`) or Apple Color Emoji. Extra Python deps: `pip install yt-dlp pillow faster-whisper` (faster-whisper downloads its model from Hugging Face once).
 
 ## Requirements
 
