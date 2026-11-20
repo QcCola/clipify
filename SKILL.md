@@ -1,6 +1,6 @@
 ---
 name: clipify
-description: Find compelling moments in a video — funny dialogue OR repeated impact actions like axe chops, hits, throws, drumbeats — cut them as standalone clips, optionally reformat 16:9 ↔ 9:16, time-warp pans for tighter reveals, and burn opus-style word-by-word captions. Use when the user mentions "clipify," "cut clips from this video," "make shorts from this," "find funny moments," "action montage," "cut on each chop/hit/punch," "reframe to 9:16," "vertical clips," or pastes a video file path and wants social-ready cuts.
+description: Find compelling moments in a video or a long livestream VOD (Twitch/YouTube link) — funny dialogue, comedic timing, in-game moments, OR repeated impact actions like axe chops, hits, drumbeats — cut them as standalone clips, reformat to 9:16 (facecam-over-gameplay, gameplay or facecam-only over a blurred fill), add an emoji hook title, and burn captions. Use when the user mentions "clipify," "clip this stream/VOD," a twitch.tv or youtube link to clip, "GTA clips," "cut clips from this video," "make shorts from this," "find funny moments," "action montage," "cut on each chop/hit/punch," "reframe to 9:16," "vertical clips," or pastes a video file path and wants social-ready cuts.
 ---
 
 # Clipify
@@ -14,8 +14,9 @@ Pick one before Step 1. The choice changes how you find moments and whether capt
 - **Dialogue mode** (default for podcasts, interviews, talking-heads): Whisper transcribes, you scan for punchlines / reactions / awkward pauses. → Step 1A. Captions in Step 5.
 - **Action mode** (woodchopping, sports, percussion, drumming, anything with repeated impact sounds): skip Whisper entirely, run `detect_transients.py` to find each strike, cut on each one. → Step 1B. Skip Step 5; the strike sounds *are* the rhythm.
 - **Hybrid**: dialogue mode for talking sections, action mode for the rest, intercut. Use both 1A and 1B.
+- **Stream mode** (a Twitch/YouTube VOD or any multi-hour gameplay recording with facecam, e.g. GTA 6 streams): never download the whole video. Fetch audio only, scout every hour for comedic timing, reactions and in-game action, transcribe all candidate windows, pick by editorial judgment, then fetch and render only the winners in the **stream format** (`formats/gta6.md`). → follow **Stream mode workflow** below and skip Steps 1A–6.
 
-If the user says "I'm not talking in this," you're in action mode. If they say "cut on each X" (chop, hit, punch, drumbeat, swing, footstep), you're in action mode. Default to dialogue mode otherwise.
+If the user pastes a twitch.tv / youtube.com link to a stream, or mentions streams/GTA/VODs, you're in stream mode. If the user says "I'm not talking in this," you're in action mode. If they say "cut on each X" (chop, hit, punch, drumbeat, swing, footstep), you're in action mode. Default to dialogue mode otherwise.
 
 ## Inputs
 
@@ -26,7 +27,8 @@ If the user says "I'm not talking in this," you're in action mode. If they say "
 ## Tooling (use only the fastest path)
 
 - **Whisper:** `whisper --model tiny.en --word_timestamps True --output_format json` (≈10× faster than `small.en`; quality fine for English). For non-English: `--model base` (drop `--language`).
-- **ffmpeg:** add `-hwaccel videotoolbox` for decode and `-preset ultrafast` for renders. Use `-c:v libx264 -crf 20` for the final master.
+- **ffmpeg:** on macOS add `-hwaccel videotoolbox` for decode (omit it on Linux/cloud, where it errors). `-preset ultrafast` for previews, `-c:v libx264 -crf 20` for the final master. Always pass `-nostdin` when ffmpeg runs inside a shell loop.
+- **Behind an HTTPS proxy** (cloud sandboxes): ffmpeg ignores `HTTPS_PROXY`; pass `-http_proxy "$HTTPS_PROXY"` for remote URLs (`fetch.py` does this for you).
 - **Numpy** for audio alignment (FFT cross-correlation). No scipy/cv2 needed.
 - **Scripts:** `<skill-dir>/scripts/` (where `<skill-dir>` is the directory containing this SKILL.md — typically `~/.claude/skills/clipify/`)
   - `analyze.py` — speaker timeline from two ROI motion files
@@ -34,8 +36,122 @@ If the user says "I'm not talking in this," you're in action mode. If they say "
   - `build_ass.py` — opus-style ASS captions from whisper JSON
   - `audio_align.py` — find offset of a sub-clip in a longer source
   - `detect_transients.py` — find sharp impact sounds (action mode); see `--help`
+  - `fetch.py` — stream mode: VOD info, parallel audio-only download, frame-accurate clip, labelled frame contact sheets
+  - `scout.py` — stream mode: score every second for reaction / comedic payoff / laughter / in-game impacts / chat, with hourly coverage; writes candidate windows
+  - `transcribe.py` — stream mode: one-process whisper over all windows → markdown digest with absolute timestamps
+  - `make_phrases.py` — whisper words → editable sentence-case caption phrases (natural breaks, ≤2 lines, `emph` word)
+  - `render_clip.py` — stream format renderer: 720×1280 layouts (`game`, `cam_game`, `cam_only`) over a blurred fill, emoji hook title, captions, output verification
+- **Fonts:** `<skill-dir>/fonts/Barlow-Bold.ttf` (bundled, OFL). Emoji need Noto Color Emoji (`fonts-noto-color-emoji`) or Apple Color Emoji. Hooks render through Pillow (`pip install pillow`).
 
 Working dir: `/tmp/clipify/` (mkdir at start, leave artifacts for debugging).
+
+---
+
+## Stream mode workflow
+
+The format rules live in `<skill-dir>/formats/gta6.md` (the user's clip format guide). Read it at the start of every stream batch; if the user attaches an updated guide, it overrides the bundled one for that batch. Below is how the code implements it.
+
+Set `S=<skill-dir>/scripts`, `URL=<vod link>`, work in `/tmp/clipify/<vod-id>/`.
+
+### S1 — Size up the source
+
+```bash
+python3 $S/fetch.py info "$URL"
+```
+
+Note duration, fps, resolution. Give the user a time estimate before the long steps (4 CPU, no GPU: audio download ≈ 1–2 min per 14 h; scout ≈ 1 min per 14 h; transcription ≈ 2 min per hour of stream at 6 candidates/hour; each render ≈ 20 s). If the stream is very long and the user hasn't scoped it, ask whether to do all of it or a range.
+
+If a host is blocked, `fetch.py` prints `media host: …` — that host (e.g. a per-VOD `*.cloudfront.net` for Twitch) needs to be allowed in the environment. YouTube from datacenter IPs often demands sign-in: ask the user for `cookies.txt` (`--cookies`).
+
+### S2 — Audio only, in parallel
+
+```bash
+python3 $S/fetch.py audio "$URL" audio.wav --start 0 --end <secs> --parts 4
+```
+
+### S3 — Scout the whole recording
+
+```bash
+python3 $S/scout.py audio.wav --windows win [--chat chat.json] > candidates.json
+```
+
+Defaults: ~6 candidates per hour, at least 4 in every hour (keep scouting after the first strong highlight; quiet hours still get looked at), 90 s apart, 60 s windows (35 s before the peak, 25 s after). Each candidate has a `kind` — `reaction`, `payoff` (quiet setup → burst: comedic timing), `laugh`, `game` (in-game impacts: crashes, gunfire), `chat`. If the user can supply a timestamped chat export (TwitchDownloader JSON, or `seconds,text` lines), pass `--chat`: a laugh-emote spike in chat is the strongest single cue to rewind and find the turn.
+
+Audio can find *when* something happened, not *whether it's funny*. The scout's job is a wide net; the judgment happens in S4.
+
+### S4 — Read every window for the payoff
+
+```bash
+python3 $S/transcribe.py candidates.json win > digest.md
+```
+
+Read the whole digest. For each candidate, look for:
+
+- **Comedic timing:** a setup line → a turn → the streamer's genuine reaction. Self-roasts, contradictions ("I know a shortcut" → police), a dramatic in-game narration followed by a blunt reaction, being wrong out loud.
+- **Something interesting in the game:** a stunt, crash, near miss, absurd NPC line, physics glitch, a mission going sideways — even if the streamer is quiet.
+- **Facecam on its own:** expressions, something happening in the room, a funny line during a menu or a loading screen. These can become `cam_only` clips.
+- Skip: setup/admin talk (giveaway logistics, settings), sponsor reads, long monologues without a turn, anything relying on muted (DMCA) audio.
+
+For each keeper write: the hook question (why a newcomer stays past the first second), the payoff line/frame and its timestamp, the setup a newcomer needs, the clip start/end. **Let the joke set the runtime**: open on the first line or action that makes a newcomer curious, keep the pause/glance/failed attempt that builds anticipation, stay for a second laugh (comeback, excuse), end as soon as the last beat lands — under 30 s for a quick gag, 45 s+ for an escalation. Two clips may share a timestamp only if each has a distinct payoff. No batch cap, no category quota; when two clips score similarly, lead with a different kind.
+
+### S5 — Look before you cut
+
+```bash
+python3 $S/fetch.py frames "$URL" frames <start> <payoff> <end> ... --sheet sheet.jpg
+```
+
+Read the sheet. Confirm the payoff is actually on screen, and identify the **layout at that moment** — streams switch scenes (dashboard, full-screen cam, gameplay with cam overlay). Pick per clip:
+
+- `cam_game` — gameplay with facecam overlay: measure the overlay ROI (`x,y,w,h` in source pixels; e.g. Clix's GTA layout is `2,0,472,264` at 1080p). The embedded overlay is blurred out of the gameplay panel automatically (`--keep-overlay` to keep it).
+- `game` — gameplay carries it alone (also when there is no cam).
+- `cam_only` — the moment makes sense with the gameplay hidden; crop the cam ROI loosely enough to show what happened in the room.
+
+If a reaction needs the game to explain it, use `cam_game`. Scene switches mid-clip: trim to the part with one layout, or warn the user.
+
+### S6 — Cut, caption, hook
+
+```bash
+python3 $S/fetch.py clip "$URL" <start> <dur> raw_N.mp4
+ffmpeg -nostdin -loglevel error -y -i raw_N.mp4 -vn -ac 1 -ar 16000 raw_N.wav
+whisper raw_N.wav --model small.en --word_timestamps True --output_format json --output_dir . --language en --fp16 False
+python3 $S/make_phrases.py raw_N.json > phrases_N.json
+```
+
+Edit `phrases_N.json` by ear: fix misheard names and words (whisper hears "chat" as "Chad", "chug" as "Chuck"), delete hallucinations ("Exclamation mark"), and set `emph` on at most one word or phrase per caption where emphasis helps the line land (rendered warm yellow). Keep the punchline appearing exactly when it is spoken. Use `small.en` here — accuracy matters more than speed on a 20–45 s clip.
+
+Write the **hook**: one short line plus one emoji that makes a newcomer curious without spoiling the payoff ("He knew a shortcut", "🎨 Clix found the best paying job in GTA 6", "😭 Nobody got him breakfast"). It renders at the top in Barlow Bold 58 px; it wraps to two lines at most.
+
+### S7 — Render in the stream format
+
+```bash
+python3 $S/render_clip.py --src raw_N.mp4 --out out/NN_slug.mp4 --layout cam_game \
+  --cam 2,0,472,264 --hook "🎨 Clix found the best paying job in GTA 6" --phrases phrases_N.json
+```
+
+720×1280, sharp centred panel(s) over a blurred, darkened duplicate, original audio once, source fps up to 60, H.264/AAC, square pixels. Captions sit in the free band between the panels (never on the face or the action), inside the middle 80 %, above the bottom 20 %. The script verifies size/SAR/codecs/fps and exits 1 on a mismatch. Optional: `--game x,y,w,h` to enlarge the gameplay (only if the cause of the payoff stays visible — for two cars approaching from opposite edges keep the full wide shot), `--cam-width`, `--hook-dur`. `--whisper raw_N.json --style karaoke` gives word-highlight captions instead of guide captions if the user asks.
+
+### S8 — Watch as a newcomer
+
+Make a contact sheet of every render (`ffmpeg -i out/NN.mp4 -vf "fps=1/2,scale=180:-1,tile=8x2" -frames:v 1 check.jpg`) and read it next to the phrases. Mark the first point where interest would slip; if the setup drags, cut it shorter or open on a clearer line, then check the reaction still lands. Check captions never cover a face, map marker or the action. Re-render.
+
+### S9 — Deliver
+
+```
+clipify_out/<vod-id>/
+  queue/    NN_slug.mp4    clips that cleared review, ranked (01 = lead)
+  review/   NN_slug.mp4    held: unclear third-party audio (music, other people's streams), permission questions, layout problems
+  clips.md                 per clip: rank, title, source credit (streamer + VOD link), source timestamp, length, one sentence on why it was chosen
+```
+
+Report the ranked list in chat (one line each) and send the files. Drafts stay out of `queue/`.
+
+### Stream-mode pitfalls
+
+- **Muted audio:** Twitch replaces DMCA'd music with silence. `scout.py` ignores muted stretches and the 30 s around them; never build a clip on a muted payoff.
+- **Layout drift:** the first hour of a stream is often setup (dashboards, full-screen cam). The GTA layout ROI does not apply there — look at the frames.
+- **Other people's camera:** a full-screen face may be a guest or another streamer, not the streamer — check before calling it a facecam clip.
+- **Don't trust a loudness peak alone:** the dry run's loudest peaks were giveaway logistics; the best clips (a $12 painting job, a chat "CHUG" chant) came from reading the words. Always run S4.
+- **Generated video elements** (e.g. Higgsfield Seedance in the format guide) are not available to this skill: mark them "generation pending" and keep original footage.
 
 ---
 
@@ -218,7 +334,7 @@ python3 <skill-dir>/scripts/build_ass.py /tmp/clipify/clip_panned.json /tmp/clip
 Burn captions:
 
 ```bash
-ffmpeg -y -i /tmp/clipify/clip_panned.mp4 -vf "subtitles=/tmp/clipify/captions.ass" \
+ffmpeg -y -i /tmp/clipify/clip_panned.mp4 -vf "subtitles=/tmp/clipify/captions.ass:fontsdir=<skill-dir>/fonts" \
   -c:v libx264 -preset fast -crf 20 -c:a copy "$OUTPUT.mp4"
 ```
 
@@ -226,7 +342,7 @@ ffmpeg -y -i /tmp/clipify/clip_panned.mp4 -vf "subtitles=/tmp/clipify/captions.a
 
 - Save each output to `<source_dir>/clipify_out/` (mkdir if missing)
 - Print one line per clip: name, duration, what was funny, output path
-- Open the first output with `open <path>` so the user can check it
+- Show the first output to the user (`open <path>` on macOS; in a cloud session send the file)
 - Offer to iterate (different style, different ROI, swap to split-screen, retime captions)
 
 ---

@@ -16,6 +16,17 @@ No cloud APIs. Runs entirely on your machine. No OpenCV. ~20s of work for a 20s 
 
 Most "auto-clip" tools are either expensive SaaS, slow, or produce slop. This skill is what I actually use to clip my long-form videos for LinkedIn and TikTok. Built for talking-head dialogue (interviews, podcasts, two-person setups).
 
+## Stream mode (Twitch / YouTube VODs, GTA-style gameplay + facecam)
+
+Paste a VOD link and the skill clips it without downloading the whole stream:
+
+1. **Audio-only download** in parallel slices (`scripts/fetch.py`).
+2. **Scout every hour** (`scripts/scout.py`): loudness reactions, quiet-setup → burst *comedic timing*, laughter rhythm, in-game impacts (crashes, gunfire), and optional chat-export laugh spikes, with an hourly coverage floor.
+3. **Transcribe every candidate window** in one Whisper pass and read for setup → punchline → reaction (`scripts/transcribe.py`).
+4. **Render in the stream format** (`scripts/render_clip.py`, rules in `formats/gta6.md`): 720×1280, facecam over gameplay / gameplay only / facecam only, sharp panels over a blurred fill, an emoji **hook title** at the top, Barlow Bold sentence-case captions with one warm-yellow emphasis word (`scripts/make_phrases.py`), verified H.264/AAC output.
+
+Fonts: Barlow Bold is bundled (`fonts/`, SIL OFL). Emoji need Noto Color Emoji (Linux: `apt install fonts-noto-color-emoji`) or Apple Color Emoji. Extra Python deps: `pip install yt-dlp pillow`.
+
 ## Requirements
 
 - macOS (uses VideoToolbox for hardware-accelerated decode — works on Linux/Windows if you remove `-hwaccel videotoolbox` flags)
