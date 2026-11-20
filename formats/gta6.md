@@ -4,6 +4,8 @@ Use this guide for every batch. These are starting editorial settings. If you ch
 
 ## What makes a moment worth clipping
 
+Before judging the recording yourself, check what other people already clipped from the same stream, video or creator (Twitch clips of the VOD, YouTube Shorts and clip channels). A moment that someone else clipped and that earned views is proven: give it priority, as long as it also works under this guide's length and context rules. Popular clip titles for the creator show which kinds of moment their audience shares.
+
 Scout the whole recording for anything worth replaying. Give priority to high-energy moments wherever they happen. Watch the game and facecam independently throughout: either can carry a clip on its own, and sometimes the timing between them makes the moment. Flag what catches your attention even during downtime. For each candidate, identify the frame or line that makes it worth watching and the setup a new viewer needs. Keep scouting after the first strong highlight.
 
 Preserve the same visual format across clips and tailor the edit to each payoff. Give viewers a beat to spot a background detail, hold suspense through a near miss, or end a joke on the reaction. Keep every distinct clip that clears review, with no batch cap or category quota. When two clips score similarly, lead with a different kind of moment. A single chase can yield both a stunt and a later joke if each stands on its own.
@@ -24,7 +26,9 @@ Rank camera-only clips alongside the gameplay edits. Two clips can share a times
 
 ## Timing and hook
 
-Let each joke set its own runtime. Open on the first line or action that makes a new viewer curious. Keep the setup needed to understand the turn, including a pause, glance or failed attempt when it builds anticipation. Give the punchline and the streamer's genuine reaction room to land. If the streamer adds a second laugh with a comeback, gesture or excuse, stay for it. End as soon as the last funny beat registers. A quick gag can run under 30 seconds and a sustained escalation can run over 45. Judge both by the payoff and pacing.
+Keep every clip short enough to hold attention start to finish: aim for 10 to 25 seconds, and never exceed 30 seconds. Open on the first line or action that makes a new viewer curious, ideally within a second or two of the setup. Keep only the setup needed to understand the turn; a pause, glance or failed attempt stays only when it builds anticipation. Give the punchline and the streamer's genuine reaction room to land, then end as soon as the last funny beat registers. If an escalation can't fit in 30 seconds, keep only its best beat.
+
+Every clip must make sense to someone who has never seen the stream. Skip moments that depend on earlier context: inside jokes, callbacks, ongoing storylines, giveaway or chat admin. Use a moment that needs context only when that context is visible on screen or said within the first few seconds of the clip.
 
 Keep the facecam prominent when the expression carries the joke. Chat can flag the moment. Time subtitles to the actual delivery so the punchline first appears when it is spoken. Keep any opening text short and spoiler-free.
 
@@ -38,7 +42,19 @@ The Scout identifies the reason to stay after the first frame and the exact mome
 
 ## Selection and delivery
 
-Keep distinct moments a new viewer can understand. One event earns one posting slot unless a second cut tells a genuinely different story. Deliver a playable MP4 per winner, a short title, source credit, a source timestamp and one sentence explaining the choice. Hold a clip with unresolved publishing permission or unclear third-party audio for review. Keep drafts separate from the posting queue.
+Deliver exactly 10 clips per batch, ranked from best to worst. Rank by how quickly and clearly the payoff lands for a stranger, the strength of the first two seconds, proven demand from clips others already posted, and rewatch or share value; at equal quality the shorter clip ranks higher. Shortlist more than 10 so that 10 survive review. Keep distinct moments a new viewer can understand. One event earns one posting slot unless a second cut tells a genuinely different story. Deliver a playable MP4 per clip with its post ready to paste (see Posting), a short title, source credit, a source timestamp and one sentence explaining the choice. Hold a clip with unresolved publishing permission or unclear third-party audio for review; held clips don't count toward the 10. Keep drafts separate from the posting queue.
+
+## Posting
+
+Every clip leaves post-ready. For each one, write:
+
+- **Title:** short and spoiler-free, the same promise as the hook (used as the YouTube Shorts title, with #shorts).
+- **Caption:** one line, 150 characters at most, in a casual viewer's voice: the relatable reaction or question, not a summary. One emoji at most. No spoilers of the payoff.
+- **Source credit:** the streamer and platform on every post (for example "🎥 Clix on Twitch"), and the VOD link in YouTube descriptions.
+- **Hashtags:** 4 to 8, lowercase, no spaces. Mix 2 to 3 for the moment and a relatable situation (#baddriver, #roommates, #whenyourfriend), 1 to 2 from tags that real clips of this creator or stream already use, and the evergreen tags below. Every tag must fit the clip; never add a popular tag that doesn't (another game, unrelated trends). Skip filler like #fyp and #viral.
+- **Evergreen tags for this format:** #gta6 plus the creator's name tag (for example #clix) and #twitchclips for Twitch sources.
+
+Platform blocks are produced for TikTok, Instagram Reels, YouTube Shorts and X from the same title, caption, credit and hashtags.
 
 ## Example edit
 
@@ -46,4 +62,4 @@ Illustrative footage: a driver says “I know a shortcut,” turns down an alley
 
 ## Run a batch
 
-Paste: “Run my GTA 6 clipping workflow on [link]. Use the clip format guide. Make every distinct clip that clears review and return the ranked MP4s.” Attach an updated copy of this guide to override the bundled settings. An accessible recording works for a first run. For a broadcast in progress, live capture and timestamped chat must be available to the session or supplied by a recorder. If available, include a source credit and a timestamped chat export with the recording.
+Paste: “Run my GTA 6 clipping workflow on [link]. Use the clip format guide. Make 10 clips, ranked best to worst, and return the MP4s with their posts.” Attach an updated copy of this guide to override the bundled settings. An accessible recording works for a first run. For a broadcast in progress, live capture and timestamped chat must be available to the session or supplied by a recorder. If available, include a source credit and a timestamped chat export with the recording. For the cross-check against clips others posted: Twitch clips need a Twitch developer app (client ID and app token), and matching YouTube uploads from a cloud session usually needs a cookies.txt exported from a logged-in browser.
