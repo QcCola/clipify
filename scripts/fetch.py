@@ -18,8 +18,15 @@ downloading the whole video.
   use it to check what is on screen and what the layout is before cutting.
 Prints the media host so a blocked-host error can be fixed by allowing it
 (Twitch VODs come from a per-VOD CloudFront host).
-YouTube may demand sign-in from datacenter IPs: pass --cookies cookies.txt.
+YouTube may demand sign-in from datacenter IPs. Cookies are found
+automatically (see youtube_cookies): --cookies FILE, else
+~/.config/clipify/cookies.txt, else the YT_COOKIES_B64 environment variable
+(the Netscape cookies.txt, base64-encoded on one line), which is written to
+that file with 0600 permissions. With Node installed and yt-dlp-ejs
+(pip install yt-dlp-ejs), yt-dlp solves YouTube's JS challenge
+(--js-runtimes node), which audio/video formats need.
 """
+import base64
 import argparse, json, os, subprocess, sys, shutil, tempfile
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
@@ -32,8 +39,46 @@ def ff(*args):
     return cmd + (["-http_proxy", PROXY] if PROXY else []) + list(args)
 
 
+COOKIE_FILE = os.path.expanduser("~/.config/clipify/cookies.txt")
+
+
+def youtube_cookies(explicit=None):
+    """Path to a cookies.txt for YouTube, or None. Never prints the contents."""
+    if explicit:
+        return explicit
+    if os.path.exists(COOKIE_FILE):
+        return COOKIE_FILE                 # yt-dlp keeps this one updated as cookies rotate
+    b64 = os.environ.get("YT_COOKIES_B64", "").strip()
+    if b64:
+        try:
+            data = base64.b64decode(b64)
+        except ValueError:
+            print("YT_COOKIES_B64 is not valid base64; ignoring it", file=sys.stderr)
+            return None
+        os.makedirs(os.path.dirname(COOKIE_FILE), mode=0o700, exist_ok=True)
+        fd = os.open(COOKIE_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        return COOKIE_FILE
+    return None
+
+
+def ytdlp_base(cookies=None, url=""):
+    """yt-dlp argv prefix: cookies for YouTube, and Node for its JS challenge when available."""
+    cmd = ["yt-dlp", "--no-warnings"]
+    if "youtu" in url or not url:
+        c = youtube_cookies(cookies)
+        if c:
+            cmd += ["--cookies", c]
+        if shutil.which("node"):
+            cmd += ["--js-runtimes", "node"]
+    elif cookies:
+        cmd += ["--cookies", cookies]
+    return cmd
+
+
 def ytdlp(url, *args, cookies=None):
-    cmd = ["yt-dlp", "--no-warnings"] + (["--cookies", cookies] if cookies else []) + list(args) + [url]
+    cmd = ytdlp_base(cookies, url) + list(args) + [url]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode:
         sys.exit(f"yt-dlp failed:\n{r.stderr.strip()[-1500:]}")

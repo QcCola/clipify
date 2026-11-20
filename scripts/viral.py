@@ -25,7 +25,9 @@ strongest outside signal that it works for a newcomer. This script:
    against the stream audio (onset envelopes in 8 bands at 10 fps, normalised
    cross-correlation over the whole stream). Long references (recaps,
    compilations) are probed in several places, so each segment they reuse is
-   found separately. A match needs a clear peak (z >= --min-z) to count.
+   found separately. A match must correlate well (--min-ncc) and beat the
+   best match anywhere else by --min-gap, so repeated sounds (alert jingles,
+   intro music) that match many places are rejected.
 4. Merges overlapping matches into "moments", scored by views and the number
    of independent re-uploads, and pools the hashtags/tags those clips used,
    weighted by views (post_kit.py uses the pool for captions).
@@ -46,7 +48,7 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from fetch import ff  # noqa: E402  (ffmpeg argv with -nostdin and the proxy)
+from fetch import ff, ytdlp_base  # noqa: E402  (ffmpeg argv with -nostdin and the proxy; yt-dlp argv with cookies + JS runtime)
 
 FPS = 10                      # feature frames per second
 HOP = 16000 // FPS
@@ -137,10 +139,14 @@ class Matcher:
         pe = float((P ** 2).sum())
         ncc = corr / np.sqrt(np.maximum(win_e[: len(corr)], 1e-6) * pe + 1e-9)
         k = int(np.argmax(ncc)); peak = float(ncc[k])
-        lo, hi = max(0, k - 5 * FPS), k + 5 * FPS          # exclude the peak's own neighbourhood
+        lo, hi = max(0, k - 10 * FPS), k + 10 * FPS         # exclude the peak's own neighbourhood
         rest = np.concatenate([ncc[:lo], ncc[hi:]])
         med = float(np.median(rest)); mad = float(np.median(np.abs(rest - med))) * 1.4826 + 1e-6
-        return {"t": k / FPS, "ncc": round(peak, 3), "z": round((peak - med) / mad, 1)}
+        # gap to the best match anywhere else: a repeated sound (alert jingle, intro
+        # music, background track) matches many places almost equally; a real moment
+        # matches one place clearly. z alone does not catch this.
+        return {"t": k / FPS, "ncc": round(peak, 3), "z": round((peak - med) / mad, 1),
+                "gap": round(peak - float(rest.max()), 3)}
 
 
 # ---------------------------------------------------------------- sources
@@ -153,7 +159,8 @@ def run(cmd, timeout=180):
 
 
 def ytdlp_json(url, *extra, cookies=None, timeout=180):
-    cmd = ["yt-dlp", "--no-warnings", "-J", "--skip-download"] + (["--cookies", cookies] if cookies else []) + list(extra) + [url]
+    # --ignore-no-formats-error: metadata (views, date, tags) is all we need here
+    cmd = ytdlp_base(cookies, url) + ["-J", "--skip-download", "--ignore-no-formats-error"] + list(extra) + [url]
     rc, out, err = run(cmd, timeout)
     if rc:
         return None, err.strip()[-300:]
@@ -257,8 +264,8 @@ def topic_words(title, creator):
 
 def youtube_refs(vod, creator, queries, channels, per_query, max_dur, cookies, notes):
     topic = topic_words(vod.get("title", ""), creator)
-    qs = list(queries) or [f"{creator} {topic}".strip(), f"{creator} shorts", f"{creator} funny moments",
-                           f"{creator} clips {topic}".strip()]
+    qs = list(queries) or [f"{creator} {topic}".strip(), f"{creator} #shorts", f"{creator} shorts {topic}".strip(),
+                           f"{creator} funny moments", f"{creator} clips {topic}".strip()]
     ids = {}
     for q in qs:
         d, err = ytdlp_json(f"ytsearch{per_query}:{q}", "--flat-playlist", cookies=cookies, timeout=120)
@@ -314,7 +321,7 @@ def youtube_refs(vod, creator, queries, channels, per_query, max_dur, cookies, n
 
 
 def ref_audio(url, out, max_dur, cookies):
-    rc, u, err = run(["yt-dlp", "--no-warnings", "-g", "-f", "bestaudio/best"] + (["--cookies", cookies] if cookies else []) + [url], 90)
+    rc, u, err = run(ytdlp_base(cookies, url) + ["-g", "-f", "bestaudio/best", url], 120)
     if rc or not u.strip():
         return False
     rc, _, _ = run(ff("-i", u.strip().splitlines()[-1], "-t", str(max_dur), "-vn", "-ac", "1", "-ar", "16000", out), 300)
@@ -331,7 +338,7 @@ def probes_for(L_sec):
     return [(float(s), plen) for s in starts]
 
 
-def match_ref(M, ref_wav, min_z, min_ncc=0.35):
+def match_ref(M, ref_wav, min_z, min_ncc=0.35, min_gap=0.12):
     x = np.frombuffer(read_wav16(ref_wav).readframes(10 ** 9), np.int16).astype(np.float32) / 32768
     R = features_from_samples(x)
     L = len(R) / FPS
@@ -339,7 +346,7 @@ def match_ref(M, ref_wav, min_z, min_ncc=0.35):
     for s, pl in probes_for(L):
         P = R[int(s * FPS): int((s + pl) * FPS)]
         m = M.locate(P)
-        if m and m["z"] >= min_z and m["ncc"] >= min_ncc:
+        if m and m["z"] >= min_z and m["ncc"] >= min_ncc and m["gap"] >= min_gap:
             hits.append({"ref_t": s, "t": m["t"], "len": pl, "z": m["z"], "ncc": m["ncc"]})
     if not hits:
         return None
@@ -375,6 +382,8 @@ def main():
     ap.add_argument("--max-ref-dur", type=float, default=1200, help="ignore uploads longer than this (s)")
     ap.add_argument("--min-z", type=float, default=7.0, help="match peak must stand this many MADs above the rest")
     ap.add_argument("--min-ncc", type=float, default=0.35, help="and correlate at least this well (true matches ~0.45-0.97, noise ~0.15)")
+    ap.add_argument("--min-gap", type=float, default=0.12,
+                    help="and beat the best match elsewhere by this much (repeated sounds: <0.1; real matches: 0.16-0.65)")
     ap.add_argument("--work", default=None, help="scratch dir for reference audio")
     ap.add_argument("--cookies")
     ap.add_argument("--no-youtube", action="store_true")
@@ -407,16 +416,21 @@ def main():
             p = os.path.join(work, re.sub(r"\W+", "_", r["url"])[-60:] + ".wav")
             ok = os.path.exists(p) or ref_audio(r["url"], p, a.max_ref_dur, a.cookies)
             return r, p if ok else None
+        dl_fail = 0
         with ThreadPoolExecutor(3) as ex:
             for i, (r, p) in enumerate(ex.map(dl, todo)):
                 if not p:
-                    r["match"] = None; r["match_note"] = "audio download failed"; continue
-                m = match_ref(M, p, a.min_z, a.min_ncc)
+                    r["match"] = None; r["match_note"] = "audio download failed"; dl_fail += 1; continue
+                m = match_ref(M, p, a.min_z, a.min_ncc, a.min_gap)
                 if m:
                     m["t"] += a.offset; m["spans"] = [[s0 + a.offset, s1 + a.offset] for s0, s1 in m["spans"]]
                 r["match"] = m
                 print(f"\rviral: matched {i + 1}/{len(todo)}", end="", file=sys.stderr)
         print(file=sys.stderr)
+        if dl_fail:
+            notes.append(f"audio download failed for {dl_fail} of {len(todo)} uploads: YouTube audio is served "
+                         "from *.googlevideo.com, which the network must allow; also needs cookies "
+                         "(YT_COOKIES_B64) and Node + yt-dlp-ejs for YouTube's JS challenge")
 
     # merge matched spans into moments
     spans = []
