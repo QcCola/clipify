@@ -393,18 +393,22 @@ def main():
     spans.sort(key=lambda s: s[0])
     moments = []
     for s0, s1, r in spans:
-        if moments and s0 <= moments[-1]["t1"] + 5:
+        # same moment = starts within 30 s of the moment's first clip (no chaining:
+        # a busy stream has overlapping clips back to back for minutes)
+        if moments and s0 - moments[-1]["t0"] <= 30:
             mo = moments[-1]; mo["t1"] = max(mo["t1"], s1)
         else:
             mo = {"t0": s0, "t1": s1, "refs": []}; moments.append(mo)
         mo["refs"].append(r)
     out_m = []
     for mo in moments:
-        uniq = {r["url"]: r for r in mo["refs"]}.values()
+        uniq = list({r["url"]: r for r in mo["refs"]}.values())
         views = sum(r.get("views") or 0 for r in uniq)
-        score = sum(math.log10((r.get("views") or 0) + 10) for r in uniq)
+        top = max((r.get("views") or 0) for r in uniq)
+        # views lead; more independent clips/uploads of the same moment add a bonus
+        score = math.log10(views + 10) + 0.5 * math.log2(len(uniq))
         out_m.append({"t0": round(mo["t0"], 1), "t1": round(mo["t1"], 1), "hms": hms(mo["t0"]),
-                      "score": round(score, 2), "views": views, "uploads": len(list(uniq)),
+                      "score": round(score, 2), "views": views, "top_views": top, "uploads": len(uniq),
                       "sources": [{"title": r["title"], "views": r.get("views"), "url": r["url"], "source": r["source"]}
                                   for r in sorted(uniq, key=lambda r: -(r.get("views") or 0))]})
     out_m.sort(key=lambda m: -m["score"])
