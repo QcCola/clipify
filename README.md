@@ -21,9 +21,14 @@ Most "auto-clip" tools are either expensive SaaS, slow, or produce slop. This sk
 Paste a VOD link and the skill clips it without downloading the whole stream:
 
 1. **Audio-only download** in parallel slices (`scripts/fetch.py`).
-2. **Scout every hour** (`scripts/scout.py`): loudness reactions, quiet-setup → burst *comedic timing*, laughter rhythm, in-game impacts (crashes, gunfire), and optional chat-export laugh spikes, with an hourly coverage floor.
-3. **Transcribe every candidate window** in one Whisper pass and read for setup → punchline → reaction (`scripts/transcribe.py`).
-4. **Render in the stream format** (`scripts/render_clip.py`, rules in `formats/gta6.md`): 720×1280, facecam over gameplay / gameplay only / facecam only, sharp panels over a blurred fill, an emoji **hook title** at the top, Barlow Bold sentence-case captions with one warm-yellow emphasis word (`scripts/make_phrases.py`), verified H.264/AAC output.
+2. **Viral cross-check** (`scripts/viral.py`): finds clips other people already posted from the same stream or creator (Twitch clips of the VOD via the official Helix API; YouTube Shorts and clip channels via yt-dlp), locates each one on the stream timeline by audio matching, and pools the hashtags they used.
+3. **Scout every hour** (`scripts/scout.py`): loudness reactions, quiet-setup → burst *comedic timing*, laughter rhythm, in-game impacts (crashes, gunfire), optional chat-export laugh spikes, and the proven viral moments, with an hourly coverage floor.
+4. **Transcribe every candidate window** in one Whisper pass and read for setup → punchline → reaction (`scripts/transcribe.py`).
+5. **Pick and rank 10 clips**, each self-contained and 30 s or shorter (`render_clip.py` enforces the cap).
+6. **Render in the stream format** (`scripts/render_clip.py`, rules in `formats/gta6.md`): 720×1280, facecam over gameplay / gameplay only / facecam only, sharp panels over a blurred fill, an emoji **hook title** at the top, Barlow Bold sentence-case captions with one warm-yellow emphasis word (`scripts/make_phrases.py`), verified H.264/AAC output.
+7. **Post kit** (`scripts/post_kit.py`): per clip, ready-to-paste TikTok / Reels / YouTube Shorts / X posts (title, caption, source credit, 4–8 hashtags), checked against platform limits, plus a ranked `posts.md`.
+
+Optional for the cross-check: `TWITCH_CLIENT_ID` + an app access token (`TWITCH_TOKEN`) for Twitch clips, and `--cookies cookies.txt` when YouTube demands sign-in (common from cloud/datacenter IPs).
 
 Fonts: Barlow Bold is bundled (`fonts/`, SIL OFL). Emoji need Noto Color Emoji (Linux: `apt install fonts-noto-color-emoji`) or Apple Color Emoji. Extra Python deps: `pip install yt-dlp pillow faster-whisper` (faster-whisper downloads its model from Hugging Face once).
 
@@ -83,7 +88,15 @@ clipify/
 │   ├── analyze.py     # speaker timeline from two ROI motion files
 │   ├── build_pan.py   # ffmpeg crop x-expression with hard cuts
 │   ├── build_ass.py   # opus/karaoke/minimal ASS captions from whisper JSON
-│   └── audio_align.py # find offset of a sub-clip in a longer source
+│   ├── audio_align.py # find offset of a sub-clip in a longer source
+│   ├── fetch.py       # stream mode: VOD info, audio-only download, clips, frame sheets
+│   ├── viral.py       # stream mode: find + locate clips others posted, hashtag pool
+│   ├── scout.py       # stream mode: candidate moments across the whole stream
+│   ├── transcribe.py  # stream mode: windows digest / one clip's words
+│   ├── make_phrases.py# stream mode: editable caption phrases
+│   ├── render_clip.py # stream mode: 9:16 render, 30 s cap, output checks
+│   └── post_kit.py    # stream mode: post-ready captions + hashtags per platform
+├── formats/gta6.md    # the stream clip format guide
 └── README.md
 ```
 

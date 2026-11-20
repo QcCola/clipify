@@ -110,6 +110,10 @@ for i, c in enumerate(sorted(cands, key=lambda c: c["t"])):
     print(f"## #{c['rank']} {c['hms']}  kind={c['kind']} score={c['score']}  "
           f"window {hms(win['start'])}-{hms(win['end'])}  json={out}")
     print(f"signals: {c['signals']}")
+    if c.get("viral"):
+        v = c["viral"]
+        print(f"VIRAL: already clipped {v['uploads']}x, {v['views']:,} views, span {hms(v['span'][0])}-{hms(v['span'][1])}: "
+              + " | ".join(v["titles"]))
     for s in r["segments"]:
         txt = s["text"].strip()
         if txt:

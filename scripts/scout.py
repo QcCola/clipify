@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Scout a long stream recording for clip candidates (stream mode).
 
-  scout.py audio.wav [--chat chat.json] [--per-hour 4] [--min-gap 90]
-           [--windows OUTDIR --pre 35 --post 25] > candidates.json
+  scout.py audio.wav [--chat chat.json] [--viral viral.json] [--per-hour 4] [--min-gap 90]
+           [--min-total 30] [--windows OUTDIR --pre 35 --post 25] > candidates.json
 
 audio.wav: 16 kHz mono int16 (fetch.py audio writes this). Hours of audio are
 processed in 10-minute chunks, so memory stays flat.
@@ -19,6 +19,10 @@ Signals, scored per second and each normalised against the whole stream
              brakes) above the local norm: things happening in the game
   chat       optional: message-rate spike and laugh/hype-emote density,
              shifted 6 s earlier because chat reacts late
+  viral      optional (--viral, from viral.py): spans that other people
+             already clipped and posted, scaled by their views. Every located
+             viral moment is also force-included as a candidate (kind "viral")
+             so the digest always shows it, and its sources ride along.
 
 Muted stretches (Twitch DMCA mutes) and the 30 s around them are ignored.
 Candidates are picked with a minimum gap and a per-hour floor so the whole
@@ -39,7 +43,9 @@ ap = argparse.ArgumentParser()
 ap.add_argument("wav")
 ap.add_argument("--chat")
 ap.add_argument("--per-hour", type=int, default=4, help="min candidates per hour of stream (coverage floor)")
-ap.add_argument("--top", type=int, default=0, help="total candidates (default: 6 per hour)")
+ap.add_argument("--top", type=int, default=0, help="total candidates (default: 6 per hour, at least --min-total)")
+ap.add_argument("--min-total", type=int, default=30, help="never fewer candidates than this: a 10-clip batch needs a wide net even on short videos")
+ap.add_argument("--viral", help="viral.json from viral.py")
 ap.add_argument("--min-gap", type=float, default=90, help="seconds between candidates")
 ap.add_argument("--windows"); ap.add_argument("--pre", type=float, default=35); ap.add_argument("--post", type=float, default=25)
 ap.add_argument("--dump", help="save per-second signals to this .npz (debugging)")
@@ -156,6 +162,20 @@ if a.chat:
     weights["chat"] = 1.5
     print(f"chat: {len(msgs)} messages", file=sys.stderr)
 
+# --- viral (other people's clips located on this timeline)
+viral_moments = []
+if a.viral:
+    vj = json.load(open(a.viral))
+    viral_moments = [m for m in vj.get("moments", []) if 0 <= m["t0"] - a.offset < S]
+    if viral_moments:
+        top_s = max(m["score"] for m in viral_moments)
+        v = np.zeros(S, np.float32)
+        for m in viral_moments:
+            i0 = int(m["t0"] - a.offset); i1 = int(min(S, m["t1"] - a.offset + 1))
+            v[i0:i1] = np.maximum(v[i0:i1], 6 * m["score"] / top_s)
+        feats["viral"] = v; weights["viral"] = 1.5
+    print(f"viral: {len(viral_moments)} located moments", file=sys.stderr)
+
 score = sum(weights[k] * np.clip(v, 0, None) for k, v in feats.items())
 score = np.convolve(score, np.ones(3) / 3, mode="same")
 score[near_mute] = -1
@@ -163,9 +183,15 @@ score[near_mute] = -1
 if a.dump: np.savez(a.dump, score=score, db=db, **feats)
 
 # --- pick: per-hour floor first, then best remaining
-top = a.top or max(1, int(np.ceil(S / 3600 * 6)))
+top = a.top or max(a.min_total, int(np.ceil(S / 3600 * 6)))
 picked = []
 def ok(t): return score[t] > 0 and all(abs(t - p) >= a.min_gap for p in picked)
+viral_at = {}
+for m in sorted(viral_moments, key=lambda m: -m["score"]):   # proven moments first, always
+    i0 = int(m["t0"] - a.offset); i1 = int(min(S - 1, m["t1"] - a.offset))
+    t = i0 + int(np.argmax(score[i0:i1 + 1])) if i1 > i0 else i0
+    if all(abs(t - p) >= 20 for p in picked):
+        picked.append(t); viral_at[t] = m
 for h0 in range(0, S, 3600):
     order = h0 + np.argsort(-score[h0:h0 + 3600])
     n = 0
@@ -183,9 +209,15 @@ cands = []
 for t in sorted(picked):
     parts = {k: round(float(weights[k] * max(0, v[t])), 2) for k, v in feats.items()}
     kind = max(parts, key=parts.get)
-    cands.append({"t": t + a.offset, "hms": hms(t + a.offset), "score": round(float(score[t]), 2),
-                  "kind": kind, "signals": parts, "db": round(float(db[t]), 1)})
-cands.sort(key=lambda c: -c["score"])
+    c = {"t": t + a.offset, "hms": hms(t + a.offset), "score": round(float(score[t]), 2),
+         "kind": kind, "signals": parts, "db": round(float(db[t]), 1)}
+    if t in viral_at:
+        m = viral_at[t]
+        c["kind"] = "viral"
+        c["viral"] = {"span": [m["t0"], m["t1"]], "views": m["views"], "uploads": m["uploads"],
+                      "titles": [x["title"] for x in m["sources"][:3]]}
+    cands.append(c)
+cands.sort(key=lambda c: (c["kind"] != "viral", -c["score"]))
 for r, c in enumerate(cands, 1): c["rank"] = r
 
 if a.windows:

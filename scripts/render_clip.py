@@ -27,8 +27,11 @@ pinned to the top for --hook-dur seconds (default: whole clip).
 Captions: --phrases (guide style, steady phrases, warm-yellow emph word) or
 --whisper + --style karaoke|opus|minimal (word highlight).
 
+Length: --max-dur (default 30 s) is a hard cap. A longer trim is refused
+before encoding; tighten --start/--end instead (or pass --max-dur 0 to lift it).
+
 Output: H.264 + AAC MP4, source fps capped at 60, square pixels. The file is
-probed after encoding and the script exits 1 if size/SAR/codecs are wrong.
+probed after encoding and the script exits 1 if size/SAR/codecs/length are wrong.
 """
 import argparse, json, os, subprocess, sys, tempfile
 from fractions import Fraction
@@ -174,6 +177,7 @@ def main():
                     help="cam_game: leave the stream's embedded facecam visible inside the gameplay panel "
                          "(default blurs it, since the camera already has its own panel)")
     ap.add_argument("--keep-tmp", action="store_true")
+    ap.add_argument("--max-dur", type=float, default=30, help="hard cap on clip length in seconds (0 = no cap)")
     a = ap.parse_args()
 
     W, H = a.w, a.h
@@ -187,6 +191,10 @@ def main():
     cam = roi(a.cam) if a.cam else None
     if a.layout in ("stack", "cam_game", "cam_only") and not cam:
         sys.exit("--cam x,y,w,h is required for this layout")
+    want = (a.end if a.end else float(info["format"]["duration"])) - a.start
+    if a.max_dur and want > a.max_dur + 0.05:
+        sys.exit(f"clip would run {want:.1f} s, over the {a.max_dur:g} s cap: tighten --start/--end "
+                 f"(open closer to the payoff, end on the reaction)")
 
     tmp = tempfile.mkdtemp(prefix="clipify_render_")
     # hook
@@ -325,6 +333,7 @@ def main():
     if ov["codec_name"] != "h264": problems.append(f"vcodec {ov['codec_name']}")
     if has_audio and (not oa or oa[0]["codec_name"] != "aac"): problems.append("audio not AAC")
     if float(Fraction(ov["r_frame_rate"])) > 60.01: problems.append(f"fps {ov['r_frame_rate']}")
+    if a.max_dur and float(o["format"]["duration"]) > a.max_dur + 0.25: problems.append(f"duration {o['format']['duration']} > {a.max_dur:g}")
     report = {"out": a.out, "size": f"{ov['width']}x{ov['height']}", "sar": ov.get("sample_aspect_ratio"),
               "fps": ov["r_frame_rate"], "duration": round(float(o["format"]["duration"]), 2),
               "layout": a.layout, "caption_top": cap_top, "ok": not problems, "problems": problems}

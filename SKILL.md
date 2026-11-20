@@ -1,6 +1,6 @@
 ---
 name: clipify
-description: Find compelling moments in a video or a long livestream VOD (Twitch/YouTube link) — funny dialogue, comedic timing, in-game moments, OR repeated impact actions like axe chops, hits, drumbeats — cut them as standalone clips, reformat to 9:16 (facecam-over-gameplay, gameplay or facecam-only over a blurred fill), add an emoji hook title, and burn captions. Use when the user mentions "clipify," "clip this stream/VOD," a twitch.tv or youtube link to clip, "GTA clips," "cut clips from this video," "make shorts from this," "find funny moments," "action montage," "cut on each chop/hit/punch," "reframe to 9:16," "vertical clips," or pastes a video file path and wants social-ready cuts.
+description: Find compelling moments in a video or a long livestream VOD (Twitch/YouTube link), cross-checked against clips others already posted of the same stream/creator — funny dialogue, comedic timing, in-game moments, OR repeated impact actions like axe chops, hits, drumbeats — cut them as standalone clips, reformat to 9:16 (facecam-over-gameplay, gameplay or facecam-only over a blurred fill), add an emoji hook title, burn captions, and (stream mode) deliver 10 ranked clips of 30 s or less with post-ready captions and hashtags. Use when the user mentions "clipify," "clip this stream/VOD," a twitch.tv or youtube link to clip, "GTA clips," "cut clips from this video," "make shorts from this," "find funny moments," "action montage," "cut on each chop/hit/punch," "reframe to 9:16," "vertical clips," "viral clips," "post-ready," "hashtags," or pastes a video file path and wants social-ready cuts.
 ---
 
 # Clipify
@@ -37,10 +37,12 @@ If the user pastes a twitch.tv / youtube.com link to a stream, or mentions strea
   - `audio_align.py` — find offset of a sub-clip in a longer source
   - `detect_transients.py` — find sharp impact sounds (action mode); see `--help`
   - `fetch.py` — stream mode: VOD info, parallel audio-only download, frame-accurate clip, labelled frame contact sheets
-  - `scout.py` — stream mode: score every second for reaction / comedic payoff / laughter / in-game impacts / chat, with hourly coverage; writes candidate windows
+  - `viral.py` — stream mode: finds clips other people already posted from the same stream/creator (Twitch clips via the official API, YouTube Shorts/clip channels via yt-dlp), locates them on the stream timeline by audio matching, pools their hashtags
+  - `scout.py` — stream mode: score every second for reaction / comedic payoff / laughter / in-game impacts / chat / viral, with hourly coverage; writes candidate windows
   - `transcribe.py` — stream mode: faster-whisper over all windows → markdown digest with absolute timestamps; `--file` for one clip's caption transcript
   - `make_phrases.py` — whisper words → editable sentence-case caption phrases (natural breaks, ≤2 lines, `emph` word)
-  - `render_clip.py` — stream format renderer: 720×1280 layouts (`game`, `cam_game`, `cam_only`) over a blurred fill, emoji hook title, captions, output verification
+  - `render_clip.py` — stream format renderer: 720×1280 layouts (`game`, `cam_game`, `cam_only`) over a blurred fill, emoji hook title, captions, output verification, hard 30 s cap
+  - `post_kit.py` — stream mode: turns the ranked batch into post-ready captions, hashtags, Shorts titles and source credit per platform, and checks platform limits
 - **Fonts:** `<skill-dir>/fonts/Barlow-Bold.ttf` (bundled, OFL). Emoji need Noto Color Emoji (`fonts-noto-color-emoji`) or Apple Color Emoji. Hooks render through Pillow (`pip install pillow`).
 
 Working dir: `/tmp/clipify/` (mkdir at start, leave artifacts for debugging).
@@ -50,6 +52,8 @@ Working dir: `/tmp/clipify/` (mkdir at start, leave artifacts for debugging).
 ## Stream mode workflow
 
 The format rules live in `<skill-dir>/formats/gta6.md` (the user's clip format guide). Read it at the start of every stream batch; if the user attaches an updated guide, it overrides the bundled one for that batch. Below is how the code implements it.
+
+**Every batch delivers exactly 10 post-ready clips, ranked best to worst, each 30 s or shorter**, with a caption, hashtags and source credit ready to paste. Clips must stand alone for a newcomer; a moment that needs context only qualifies if that context fits in the first few seconds of the clip.
 
 Set `S=<skill-dir>/scripts`, `URL=<vod link>`, work in `/tmp/clipify/<vod-id>/`.
 
@@ -69,13 +73,22 @@ If a host is blocked, `fetch.py` prints `media host: …` — that host (e.g. a 
 python3 $S/fetch.py audio "$URL" audio.wav --start 0 --end <secs> --parts 4
 ```
 
-### S3 — Scout the whole recording
+### S3 — Check what already went viral, then scout
 
 ```bash
-python3 $S/scout.py audio.wav --windows win [--chat chat.json] > candidates.json
+python3 $S/viral.py audio.wav --vod "$URL" [--creator NAME] [--yt-channel <clip channel /shorts URL>] \
+    [--cookies cookies.txt] --work viral_refs > viral.json
+python3 $S/scout.py audio.wav --windows win --viral viral.json [--chat chat.json] > candidates.json
 ```
 
-Defaults: ~6 candidates per hour, at least 4 in every hour (keep scouting after the first strong highlight; quiet hours still get looked at), 90 s apart, 60 s windows (35 s before the peak, 25 s after). Each candidate has a `kind` — `reaction`, `payoff` (quiet setup → burst: comedic timing), `laugh`, `game` (in-game impacts: crashes, gunfire), `chat`. If the user can supply a timestamped chat export (TwitchDownloader JSON, or `seconds,text` lines), pass `--chat`: a laugh-emote spike in chat is the strongest single cue to rewind and find the turn.
+`viral.py` cross-references the stream against clips other people already posted:
+
+- **Twitch clips cut from this VOD** (official Helix API, exact VOD offsets and view counts). Needs the user's Twitch developer app: `TWITCH_CLIENT_ID` in the environment plus its app access token (`TWITCH_TOKEN`, or saved as the session's credential for `api.twitch.tv`). Without it the script skips Twitch and says so; tell the user once, don't block on it. Never borrow another site's client ID.
+- **YouTube Shorts / clip-channel uploads** of the creator and the stream's topic (yt-dlp search; add `--yt-channel` for known clip channels, `--query` for better searches). Each upload is audio-matched against the stream (onset envelopes, ~1 s per probe on a 21 h stream; true matches correlate 0.45–0.97, noise ~0.15). From datacenter IPs YouTube usually demands sign-in for anything past search: the script then keeps titles/views as unlocated `hints` and notes that `--cookies` would enable matching. Ask the user for a `cookies.txt` if they want full matching.
+
+Read `viral.json`: `moments` are located spans with views and source titles (proven moments); `hints` are popular titles you can search for in the digest by keyword; `hashtags` is the tag pool real uploads used. A fresh VOD may have no clips yet: then the batch rests on your own judgment, and you say so.
+
+`scout.py --viral` force-includes every located viral moment as a candidate (`kind=viral`, listed first) and boosts the score around them. Defaults: ~6 candidates per hour, never fewer than 30 in total, at least 4 in every hour (keep scouting after the first strong highlight; quiet hours still get looked at), 90 s apart, 60 s windows (35 s before the peak, 25 s after). Each candidate has a `kind` — `viral` (already clipped elsewhere), `reaction`, `payoff` (quiet setup → burst: comedic timing), `laugh`, `game` (in-game impacts: crashes, gunfire), `chat`. If the user can supply a timestamped chat export (TwitchDownloader JSON, or `seconds,text` lines), pass `--chat`: a laugh-emote spike in chat is the strongest single cue to rewind and find the turn.
 
 Audio can find *when* something happened, not *whether it's funny*. The scout's job is a wide net; the judgment happens in S4.
 
@@ -94,7 +107,19 @@ Read the whole digest. For each candidate, look for:
 - **Facecam on its own:** expressions, something happening in the room, a funny line during a menu or a loading screen. These can become `cam_only` clips.
 - Skip: setup/admin talk (giveaway logistics, settings), sponsor reads, long monologues without a turn, anything relying on muted (DMCA) audio.
 
-For each keeper write: the hook question (why a newcomer stays past the first second), the payoff line/frame and its timestamp, the setup a newcomer needs, the clip start/end. **Let the joke set the runtime**: open on the first line or action that makes a newcomer curious, keep the pause/glance/failed attempt that builds anticipation, stay for a second laugh (comeback, excuse), end as soon as the last beat lands — under 30 s for a quick gag, 45 s+ for an escalation. Two clips may share a timestamp only if each has a distinct payoff. No batch cap, no category quota; when two clips score similarly, lead with a different kind.
+Digest blocks marked `VIRAL:` were already clipped and posted by others: treat them as strong candidates, but still judge them by the rules below (someone else's 2-minute recap segment doesn't become a 25 s clip automatically).
+
+For each keeper write: the hook question (why a newcomer stays past the first second), the payoff line/frame and its timestamp, the setup a newcomer needs, the clip start/end.
+
+**Short and self-contained (max 30 s):**
+
+- Target 10–25 s; 30 s is a hard cap (`render_clip.py` refuses longer trims). Open on the line or action that makes a newcomer curious, ideally within 1–2 s of the setup; cut dead air between setup and payoff; end as soon as the reaction lands.
+- **No context required.** Reject moments that only work if you watched earlier (inside jokes, callbacks to an hour ago, "remember when…", ongoing storylines, giveaway admin). Accept one that needs context only if the context is itself on screen or said in the first ~5 s of the clip.
+- An escalation that can't fit in 30 s: keep only its best beat, or drop it.
+
+**Shortlist ~15, deliver 10.** Pick about 15 candidates so that after the frame check (S5) and review (S8) at least 10 survive. If fewer than 10 pass, go back to the digest (or re-scout with a higher `--top`) before delivering; only a source that genuinely can't yield 10 (e.g. a 10-minute video) ships fewer, and you say so. Two clips may share a timestamp only if each has a distinct payoff.
+
+**Rank 1–10, best to worst**, by: (1) how fast and clearly the payoff lands for a stranger, (2) hook strength in the first 2 s, (3) proven demand (a located viral moment with views ranks up), (4) rewatch/share value (quotable line, relatable situation), (5) shorter beats longer at equal quality. Lead with a different kind when two clips score similarly.
 
 ### S5 — Look before you cut
 
@@ -138,14 +163,25 @@ Make a contact sheet of every render (`ffmpeg -i out/NN.mp4 -vf "fps=1/2,scale=1
 
 ### S9 — Deliver
 
-```
-clipify_out/<vod-id>/
-  queue/    NN_slug.mp4    clips that cleared review, ranked (01 = lead)
-  review/   NN_slug.mp4    held: unclear third-party audio (music, other people's streams), permission questions, layout problems
-  clips.md                 per clip: rank, title, source credit (streamer + VOD link), source timestamp, length, one sentence on why it was chosen
+Write `clipify_out/<vod-id>/clips.json` (format in `post_kit.py --help`): per clip its rank, file, a short spoiler-free title, a caption, and its own hashtags; at batch level the creator, platform, VOD link and the format guide's evergreen `base_tags`. Captions and hashtags follow the format guide's **Posting** section; take relevant tags from `viral.json`'s pool, never off-topic ones because they're popular. Then:
+
+```bash
+python3 $S/post_kit.py clipify_out/<vod-id>/clips.json --viral viral.json     # --expect 10 --max-dur 30 by default
 ```
 
-Report the ranked list in chat (one line each) and send the files. Drafts stay out of `queue/`.
+It refuses (exit 1, listing problems) unless the batch is exactly 10 ranked clips, each ≤ 30 s, with a 1–150 char caption, 4–8 clean hashtags, a Shorts title ≤ 100 chars. Fix and rerun until it passes.
+
+```
+clipify_out/<vod-id>/
+  queue/    NN_slug.mp4    the 10 clips, ranked (01 = best)
+            NN_slug.txt    ready-to-paste TikTok / Reels / YouTube Shorts (title + description) / X posts
+  review/   NN_slug.mp4    extras held back: unclear third-party audio, permission questions, layout problems
+  clips.json               your batch spec
+  posts.md                 ranked table (title, source time, length, why) + every post, + the viral hashtag pool
+  posts.json               the same, machine-readable
+```
+
+Report the ranked list in chat (one line each: rank, title, length, why) and send the files. Drafts stay out of `queue/`; held clips don't count toward the 10.
 
 ### Stream-mode pitfalls
 
@@ -153,6 +189,8 @@ Report the ranked list in chat (one line each) and send the files. Drafts stay o
 - **Layout drift:** the first hour of a stream is often setup (dashboards, full-screen cam). The GTA layout ROI does not apply there — look at the frames.
 - **Other people's camera:** a full-screen face may be a guest or another streamer, not the streamer — check before calling it a facecam clip.
 - **Don't trust a loudness peak alone:** the dry run's loudest peaks were giveaway logistics; the best clips (a $12 painting job, a chat "CHUG" chant) came from reading the words. Always run S4.
+- **Facecam overlay size changes between streams:** measure `--cam` on a frame from each batch (Clix's overlay was 472×264 in one stream and ~470×350 in another, which cut his face off at the default). Keep the game HUD (health bar) out of the cam crop.
+- **Viral ≠ fits the format:** a moment other people clipped as a 3-minute segment still has to work in ≤ 30 s without context. And a creator's most-used tags can be from another game; pick hashtags per clip.
 - **Generated video elements** (e.g. Higgsfield Seedance in the format guide) are not available to this skill: mark them "generation pending" and keep original footage.
 
 ---
