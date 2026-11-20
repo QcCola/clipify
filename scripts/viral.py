@@ -12,9 +12,11 @@ strongest outside signal that it works for a newcomer. This script:
 2. Collects reference clips:
    * Twitch (official Helix API): clips cut from THIS VOD, with their exact
      VOD offset, view count and title. Needs a Twitch developer app:
-     TWITCH_CLIENT_ID in the environment, and its app access token either in
-     TWITCH_TOKEN or injected for api.twitch.tv by the session's credential
-     proxy. Skipped with a note when not configured.
+     TWITCH_CLIENT_ID in the environment, plus either TWITCH_CLIENT_SECRET
+     (a fresh app token is minted at id.twitch.tv every run, so nothing
+     expires) or an app access token in TWITCH_TOKEN / injected for
+     api.twitch.tv by the session's credential proxy (expires in ~60 days).
+     Skipped with a note when not configured.
    * YouTube (yt-dlp search, no key): Shorts / clip-channel uploads for the
      creator and the VOD's topic, plus any --yt-channel pages (e.g. a clip
      channel's /shorts tab). Only uploads up to --max-ref-dur seconds that were
@@ -38,7 +40,7 @@ Feed it to scout.py --viral viral.json (boosts and force-includes those
 moments) and to post_kit.py --viral viral.json (hashtag pool).
 The stream audio's features are cached as audio.wav.feat.npy.
 """
-import argparse, json, math, os, re, subprocess, sys, tempfile, time, urllib.parse, urllib.request, wave
+import argparse, json, math, os, re, subprocess, sys, tempfile, time, urllib.error, urllib.parse, urllib.request, wave
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
@@ -161,16 +163,49 @@ def ytdlp_json(url, *extra, cookies=None, timeout=180):
         return None, "bad json"
 
 
+_TOKEN = {}
+
+
+def twitch_token(cid, notes):
+    """App access token. With TWITCH_CLIENT_SECRET set, mint a fresh one per run
+    (client-credentials grant at id.twitch.tv), so it never expires on you.
+    Otherwise TWITCH_TOKEN, or a placeholder the session's credential proxy
+    replaces for api.twitch.tv."""
+    if "v" in _TOKEN:
+        return _TOKEN["v"]
+    secret = os.environ.get("TWITCH_CLIENT_SECRET")
+    tok = os.environ.get("TWITCH_TOKEN", "proxy-injected")
+    if secret:
+        body = urllib.parse.urlencode({"client_id": cid, "client_secret": secret,
+                                       "grant_type": "client_credentials"}).encode()
+        try:
+            with urllib.request.urlopen(urllib.request.Request("https://id.twitch.tv/oauth2/token", data=body),
+                                        timeout=30) as r:
+                tok = json.load(r)["access_token"]
+        except Exception as e:  # noqa: BLE001  (never echo the secret)
+            notes.append(f"twitch: could not mint a token from TWITCH_CLIENT_SECRET ({type(e).__name__}: "
+                         f"{str(e)[:120]}); check the secret, and that id.twitch.tv is allowed")
+    _TOKEN["v"] = tok
+    return tok
+
+
 def helix(path, params, notes):
     cid = os.environ.get("TWITCH_CLIENT_ID")
     if not cid:
         return None
-    tok = os.environ.get("TWITCH_TOKEN", "proxy-injected")
+    tok = twitch_token(cid, notes)
     url = "https://api.twitch.tv/helix/" + path + "?" + urllib.parse.urlencode(params, doseq=True)
     req = urllib.request.Request(url, headers={"Client-Id": cid, "Authorization": f"Bearer {tok}"})
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             return json.load(r)
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            notes.append("twitch: token rejected (401). Expired or wrong: set TWITCH_CLIENT_SECRET for automatic "
+                         "tokens, or generate a new app token")
+        else:
+            notes.append(f"twitch api {path}: HTTP {e.code}")
+        return None
     except Exception as e:  # noqa: BLE001
         notes.append(f"twitch api {path}: {type(e).__name__}: {str(e)[:160]}")
         return None

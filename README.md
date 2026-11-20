@@ -28,7 +28,7 @@ Paste a VOD link and the skill clips it without downloading the whole stream:
 6. **Render in the stream format** (`scripts/render_clip.py`, rules in `formats/gta6.md`): 720×1280, facecam over gameplay / gameplay only / facecam only, sharp panels over a blurred fill, an emoji **hook title** at the top, Barlow Bold sentence-case captions with one warm-yellow emphasis word (`scripts/make_phrases.py`), verified H.264/AAC output.
 7. **Post kit** (`scripts/post_kit.py`): per clip, ready-to-paste TikTok / Reels / YouTube Shorts / X posts (title, caption, source credit, 4–8 hashtags), checked against platform limits, plus a ranked `posts.md`.
 
-Optional for the cross-check: `TWITCH_CLIENT_ID` + an app access token (`TWITCH_TOKEN`) for Twitch clips, and `--cookies cookies.txt` when YouTube demands sign-in (common from cloud/datacenter IPs).
+Optional for the cross-check: `TWITCH_CLIENT_ID` + `TWITCH_CLIENT_SECRET` (fresh token every run) or an app access token (`TWITCH_TOKEN`, expires in ~60 days) for Twitch clips, and `--cookies cookies.txt` when YouTube demands sign-in (common from cloud/datacenter IPs).
 
 Fonts: Barlow Bold is bundled (`fonts/`, SIL OFL). Emoji need Noto Color Emoji (Linux: `apt install fonts-noto-color-emoji`) or Apple Color Emoji. Extra Python deps: `pip install yt-dlp pillow faster-whisper` (faster-whisper downloads its model from Hugging Face once).
 
